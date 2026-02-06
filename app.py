@@ -36,11 +36,19 @@ with st.sidebar:
         st.stop()
     
     st.divider()
+    st.header("👤 伙伴出勤管理")
+    # 动态勾选出勤人员
+    active_sitters = []
+    if st.checkbox("梦蕊 (出勤)", value=True): active_sitters.append("梦蕊")
+    if st.checkbox("依蕊 (出勤)", value=True): active_sitters.append("依蕊")
+    
+    if not active_sitters:
+        st.error("请至少选择一位出勤伙伴！")
+        st.stop()
+
+    st.divider()
     date_range = st.date_input("选择日期区间", value=(datetime.now(), datetime.now() + timedelta(days=2)))
     default_city = st.text_input("默认城市", value="深圳市")
-    
-    # 这里默认设为2人，对应梦蕊和依蕊
-    sitter_count = st.number_input("可用喂猫师人数", min_value=1, value=2)
     uploaded_file = st.file_uploader("上传《客户主表》Excel", type=["xlsx"])
 
 # --- 3. 核心计算逻辑 ---
@@ -55,8 +63,7 @@ if uploaded_file and isinstance(date_range, tuple) and len(date_range) == 2:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 喂猫师姓名映射表
-        sitter_names = {0: "梦蕊", 1: "依蕊"}
+        sitter_count = len(active_sitters)
         
         for idx, current_date in enumerate(date_list):
             current_ts = pd.Timestamp(current_date)
@@ -81,11 +88,15 @@ if uploaded_file and isinstance(date_range, tuple) and len(date_range) == 2:
                 
                 valid_df = day_df.dropna(subset=['lng', 'lat']).copy()
                 if not valid_df.empty:
-                    kmeans = KMeans(n_clusters=min(len(valid_df), sitter_count), random_state=42, n_init='auto')
-                    valid_df['派单组别'] = kmeans.fit_predict(valid_df[['lng', 'lat']])
+                    # 如果只有一个人，不进行聚类，直接分配
+                    if sitter_count == 1:
+                        valid_df['派单组别'] = 0
+                    else:
+                        kmeans = KMeans(n_clusters=min(len(valid_df), sitter_count), random_state=42, n_init='auto')
+                        valid_df['派单组别'] = kmeans.fit_predict(valid_df[['lng', 'lat']])
                     
-                    # 动态赋予姓名：0->梦蕊, 1->依蕊, 2之后自动补序号
-                    valid_df['喂猫师'] = valid_df['派单组别'].map(lambda x: sitter_names.get(x, f"喂猫师_{x+1}"))
+                    # 动态映射姓名
+                    valid_df['喂猫师'] = valid_df['派单组别'].map(lambda x: active_sitters[x])
                     
                     valid_df = valid_df.sort_values(by=['喂猫师', 'lat'], ascending=False)
                     valid_df['顺序'] = valid_df.groupby('喂猫师').cumcount() + 1
@@ -110,7 +121,6 @@ if 'dispatch_data' in st.session_state:
     if not view_data.empty:
         view_data['导航'] = view_data.apply(lambda r: f"https://uri.amap.com/marker?position={r['lng']},{r['lat']}&name={urllib.parse.quote(r['详细地址'])}", axis=1)
         
-        # 渲染带街道背景的地图
         st.pydeck_chart(pdk.Deck(
             map_style=pdk.map_styles.CARTO_LIGHT,
             initial_view_state=pdk.ViewState(longitude=view_data['lng'].mean(), latitude=view_data['lat'].mean(), zoom=11),
