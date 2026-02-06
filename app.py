@@ -12,7 +12,6 @@ import re
 # --- 核心配置 ---
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
-# 智能提取房号函数
 def extract_room(addr):
     if pd.isna(addr): return ""
     match = re.search(r'([a-zA-Z0-9-]{2,})$', str(addr).strip())
@@ -31,7 +30,7 @@ def get_coords_cached(address, city, api_key):
     except: return None, None, "异常"
     return None, None, "未匹配"
 
-st.set_page_config(page_title="太阳爸爸-云端作业台", layout="wide")
+st.set_page_config(page_title="太阳爸爸-云端伙伴版", layout="wide")
 
 with st.sidebar:
     st.header("🔑 团队授权")
@@ -52,7 +51,7 @@ if uploaded_file and len(active_sitters) > 0:
     raw_df = pd.read_excel(uploaded_file)
     raw_df.columns = raw_df.columns.str.strip()
     
-    # 智能补全房号、备注、频率，防止 KeyError
+    # 智能预处理，彻底解决 KeyError
     if '房号' not in raw_df.columns: raw_df['房号'] = raw_df['详细地址'].apply(extract_room)
     if '喂养备注' not in raw_df.columns: raw_df['喂养备注'] = "无"
     if '投喂频率' not in raw_df.columns: raw_df['投喂频率'] = 1
@@ -85,7 +84,7 @@ if uploaded_file and len(active_sitters) > 0:
         
         if all_results:
             st.session_state['cloud_data'] = pd.concat(all_results)
-            st.success("✅ 云端数据已就绪")
+            st.success("✅ 云端数据就绪")
 
 if 'cloud_data' in st.session_state:
     df = st.session_state['cloud_data']
@@ -96,6 +95,7 @@ if 'cloud_data' in st.session_state:
     
     worker_data = df[(df['派单日期'] == cur_date) & (df['喂猫师'] == cur_sitter)].copy()
     if not worker_data.empty:
+        # 地图显示
         st.pydeck_chart(pdk.Deck(
             map_style=pdk.map_styles.CARTO_LIGHT,
             initial_view_state=pdk.ViewState(longitude=worker_data['lng'].mean(), latitude=worker_data['lat'].mean(), zoom=12),
@@ -106,29 +106,35 @@ if 'cloud_data' in st.session_state:
             tooltip={"text": "顺序: {顺序}\n地址: {详细地址}"}
         ))
 
-        st.subheader(f"📋 {cur_sitter} 的待办清单")
+        # --- 补全核心功能：已完成勾选框 ---
+        st.subheader(f"📋 {cur_sitter} 的今日清单")
         display_df = worker_data.copy()
-        display_df['状态'] = False 
+        display_df['完成'] = False  # 强制注入勾选列
+        
+        # 拨号链接逻辑处理
         if '联系电话' in display_df.columns:
             display_df['拨号'] = display_df['联系电话'].apply(lambda x: f"tel:{x}")
+        else:
+            display_df['拨号'] = "" # 防止遗漏报错
+
+        # 智能选择存在的列显示
+        target_cols = ['完成', '顺序', '房号', '详细地址', '投喂频率', '拨号', '喂养备注']
+        existing = [c for c in target_cols if c in display_df.columns]
         
-        # 显示列
-        show_cols = ['状态', '顺序', '房号', '详细地址', '投喂频率', '拨号', '喂养备注']
-        existing = [c for c in show_cols if c in display_df.columns or c in ['状态', '拨号']]
-        
+        # 使用 data_editor 渲染勾选框
         st.data_editor(
             display_df[existing],
             column_config={
-                "状态": st.column_config.CheckboxColumn("完成", default=False),
-                "投喂频率": st.column_config.NumberColumn("频率(天/次)", format="%d"),
+                "完成": st.column_config.CheckboxColumn("核销状态", default=False),
+                "投喂频率": st.column_config.NumberColumn("频率", format="%d"),
                 "拨号": st.column_config.LinkColumn("📞 拨号"),
                 "喂养备注": st.column_config.TextColumn("⚠️ 备注", width="large")
             },
             hide_index=True, use_container_width=True
         )
         
-        st.write("📍 **一键导航**")
+        st.write("📍 **快捷导航**")
         nav_cols = st.columns(3)
         for i, row in enumerate(worker_data.itertuples()):
             nav_url = f"https://uri.amap.com/marker?position={row.lng},{row.lat}&name={urllib.parse.quote(row.详细地址)}"
-            nav_cols[i % 3].link_button(f"{row.顺序}. {getattr(row,'房号','地址')}", nav_url)
+            nav_cols[i % 3].link_button(f"{row.顺序}. {getattr(row,'房号','点我导航')}", nav_url)
