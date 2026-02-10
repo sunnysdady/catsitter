@@ -13,10 +13,10 @@ import numpy as np
 # --- 核心配置 ---
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
-# --- UI 美化函数：线条小狗背景 ---
+# --- UI 美化函数：更换新背景 ---
 def set_cute_background():
     # 已替换为你提供的新图片地址
-    background_url = "https://iam.marieclaire.com.tw/m800c533h100b0webp100/assets/mc/202509/68BBB6AD90C511757132461.png"
+    background_url = "https://preview.redd.it/demon-slayer-wallpapers-v0-socnqv4d64me1.jpg?width=1080&crop=smart&auto=webp&s=df47a3cb4676d73c483201e6948d2b18198bb653"
     
     st.markdown(f"""
          <style>
@@ -24,24 +24,27 @@ def set_cute_background():
          .stApp {{
              background-image: url("{background_url}");
              background-attachment: fixed;
-             background-size: 400px; /* 控制图案大小，可自行调整 */
-             background-repeat: repeat;
+             background-size: cover; /* 让壁纸覆盖全屏 */
+             background-position: center center;
          }}
-         /* 让侧边栏和主内容区变成半透明白色，确保文字清晰 */
+         /* 为了防止背景太花导致看不清字，
+            我们给侧边栏和主内容区加上了高不透明度的白色背景垫底 
+         */
          [data-testid="stSidebar"] > div:first-child {{
-             background-color: rgba(255, 255, 255, 0.95) !important;
+             background-color: rgba(255, 255, 255, 0.95) !important; /* 95% 不透明白色 */
              border-right: 2px solid #f0f2f6;
          }}
          .block-container {{
-             background-color: rgba(255, 255, 255, 0.92);
+             /* 稍微提高了不透明度到 0.96，确保对比度足够 */
+             background-color: rgba(255, 255, 255, 0.96); 
              padding: 2rem;
              border-radius: 15px;
              box-shadow: 0 4px 12px rgba(0,0,0,0.1);
              margin-top: 2rem;
          }}
-         /* 美化标题颜色 */
+         /* 美化标题颜色，橙色在白底上很清晰 */
          h1, h2, h3 {{
-             color: #FF9F43 !important; /* 使用温暖的橘色 */
+             color: #FF9F43 !important; 
              font-family: 'Comic Sans MS', 'Arial Rounded MT Bold', sans-serif;
          }}
          </style>
@@ -67,7 +70,7 @@ def get_coords_cached(address, city, api_key):
 
 # 1. 更新品牌名称
 st.set_page_config(page_title="小猫直喂-云端作业台", layout="wide", page_icon="🐱")
-# 2. 应用可爱背景
+# 2. 应用新背景
 set_cute_background()
 
 with st.sidebar:
