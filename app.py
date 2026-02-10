@@ -15,15 +15,14 @@ AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
 # --- UI 美化函数：线条小狗背景 ---
 def set_cute_background():
-    # 这里使用了一个公开的可爱线条狗素材平铺背景
-    # 你可以随时替换 url(...) 里的链接为你自己的图片地址
-    background_url = "https://img.freepik.com/free-vector/seamless-pattern-with-cute-cartoon-dogs_1284-32655.jpg?w=1060&t=st=1707805000~exp=1707805600~hmac=5a90349154630976188675776927725876736454232700735536624352676651"
+    # 已替换为你提供的新图片地址
+    background_url = "https://iam.marieclaire.com.tw/m800c533h100b0webp100/assets/mc/202509/68BBB6AD90C511757132461.png"
     
     st.markdown(f"""
          <style>
          /* 设置整体背景图片 */
          .stApp {{
-             background-image: url("{https://iam.marieclaire.com.tw/m800c533h100b0webp100/assets/mc/202509/68BBB6AD90C511757132461.png}");
+             background-image: url("{background_url}");
              background-attachment: fixed;
              background-size: 400px; /* 控制图案大小，可自行调整 */
              background-repeat: repeat;
