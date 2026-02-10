@@ -31,7 +31,7 @@ def get_coords_cached(address, city, api_key):
     except: return None, None, "异常"
     return None, None, "未匹配"
 
-st.set_page_config(page_title="太阳爸爸-指定绑定版", layout="wide")
+st.set_page_config(page_title="太阳爸爸-云端全功能版", layout="wide")
 
 with st.sidebar:
     st.header("🔑 团队授权")
@@ -45,27 +45,28 @@ with st.sidebar:
     if st.checkbox("依蕊 (出勤)", value=True): active_sitters.append("依蕊")
     
     st.divider()
-    date_range = st.date_input("派单日期区间", value=(datetime.now(), datetime.now() + timedelta(days=2)))
+    # 建议这里选下周的时间段，方便导出周排期
+    date_range = st.date_input("派单日期区间", value=(datetime.now(), datetime.now() + timedelta(days=6)))
     uploaded_file = st.file_uploader("上传《客户主表》Excel", type=["xlsx"])
 
 if uploaded_file and len(active_sitters) > 0:
     raw_df = pd.read_excel(uploaded_file)
     raw_df.columns = raw_df.columns.str.strip()
     
-    # 智能补全
+    # 补全关键列
     if '房号' not in raw_df.columns: raw_df['房号'] = raw_df['详细地址'].apply(extract_room)
     if '宠物名字' not in raw_df.columns: raw_df['宠物名字'] = "猫主子"
     if '指定喂猫师' not in raw_df.columns: raw_df['指定喂猫师'] = np.nan
+    if '喂养备注' not in raw_df.columns: raw_df['喂养备注'] = "无"
     if '投喂频率' not in raw_df.columns: raw_df['投喂频率'] = 1
 
-    if st.button("🚀 生成绑定均衡方案"):
+    if st.button("🚀 生成绑定均衡方案并准备导出"):
         start_date, end_date = date_range
         date_list = pd.date_range(start=start_date, end=end_date).tolist()
         all_results = []
         
         for current_date in date_list:
             current_ts = pd.Timestamp(current_date)
-            # 频率与日期过滤
             day_df = raw_df[raw_df.apply(lambda r: (r['服务开始日期'] <= current_ts <= r['服务结束日期']) and ((current_ts - r['服务开始日期']).days % (r['投喂频率'] if r['投喂频率']>0 else 1) == 0), axis=1)].copy()
             
             if not day_df.empty:
@@ -75,47 +76,28 @@ if uploaded_file and len(active_sitters) > 0:
                 valid_df = day_df.dropna(subset=['lng', 'lat']).copy()
                 
                 if not valid_df.empty:
-                    # --- 改进版：固定绑定 + 负载均衡算法 ---
                     valid_df['喂猫师'] = valid_df['指定喂猫师']
-                    
-                    # 识别哪些是需要算法分配的自由单
                     free_mask = valid_df['喂猫师'].isna() | (~valid_df['喂猫师'].isin(active_sitters))
                     
                     if free_mask.any():
                         free_df = valid_df[free_mask].copy()
                         sitter_count = len(active_sitters)
-                        
                         if len(free_df) < sitter_count:
                             valid_df.loc[free_mask, '喂猫师'] = active_sitters[0]
                         else:
                             kmeans = KMeans(n_clusters=sitter_count, random_state=42, n_init='auto')
                             free_df['组'] = kmeans.fit_predict(free_df[['lng', 'lat']])
-                            
-                            # 均衡逻辑：结合已指定的单量进行调配
                             while sitter_count > 1:
-                                # 计算当前每个人的总单量（指定+分配）
-                                current_totals = []
-                                for s in active_sitters:
-                                    fixed_count = len(valid_df[valid_df['喂猫师'] == s])
-                                    assigned_count = len(free_df[free_df['组'] == active_sitters.index(s)])
-                                    current_totals.append(fixed_count + assigned_count)
-                                
-                                g0_total, g1_total = current_totals[0], current_totals[1]
-                                if abs(g0_total - g1_total) <= 2: break
-                                
-                                src_idx_in_free = 0 if g0_total > g1_total else 1
-                                dst_idx_in_free = 1 - src_idx_in_free
-                                dst_center = kmeans.cluster_centers_[dst_idx_in_free]
-                                
-                                targets = free_df[free_df['组'] == src_idx_in_free].index
+                                current_totals = [len(valid_df[valid_df['喂猫师'] == s]) + len(free_df[free_df['组'] == active_sitters.index(s)]) for s in active_sitters]
+                                if abs(current_totals[0] - current_totals[1]) <= 2: break
+                                src, dst = (0, 1) if current_totals[0] > current_totals[1] else (1, 0)
+                                dst_center = kmeans.cluster_centers_[dst]
+                                targets = free_df[free_df['组'] == src].index
                                 if len(targets) == 0: break
                                 dists = ((free_df.loc[targets, 'lng'] - dst_center[0])**2 + (free_df.loc[targets, 'lat'] - dst_center[1])**2)
-                                free_df.loc[dists.idxmin(), '组'] = dst_idx_in_free
-
-                            # 将分配结果填回主表
+                                free_df.loc[dists.idxmin(), '组'] = dst
                             valid_df.loc[free_mask, '喂猫师'] = free_df['组'].map(lambda x: active_sitters[x])
 
-                    # 兜底：如果没分成功的都给第一个人
                     valid_df['喂猫师'] = valid_df['喂猫师'].fillna(active_sitters[0])
                     valid_df = valid_df.sort_values(by=['喂猫师', 'lat'], ascending=False)
                     valid_df['顺序'] = valid_df.groupby('喂猫师').cumcount() + 1
@@ -124,14 +106,32 @@ if uploaded_file and len(active_sitters) > 0:
         
         if all_results:
             st.session_state['cloud_data'] = pd.concat(all_results)
-            st.success("✅ 固定绑定方案已生成")
+            st.success("✅ 云端方案已生成，下拉查看或点击导出")
 
 if 'cloud_data' in st.session_state:
     df = st.session_state['cloud_data']
     st.divider()
+    
+    # --- 新增：云端版导出功能区 ---
+    st.subheader("📊 导出专属排期")
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='全量汇总表')
+        for sitter in df['喂猫师'].unique():
+            # 这里会为 依蕊、梦蕊 分别创建 Sheet
+            df[df['喂猫师'] == sitter].to_excel(writer, index=False, sheet_name=sitter)
+    
+    st.download_button(
+        label="📥 点击下载 Excel 周排期报告 (分人分表)",
+        data=output.getvalue(),
+        file_name=f"太阳爸爸派单计划_{datetime.now().strftime('%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    
+    st.divider()
     c1, c2 = st.columns(2)
-    with c1: cur_date = st.selectbox("📅 日期", sorted(df['派单日期'].unique()))
-    with c2: cur_sitter = st.selectbox("👤 伙伴视角", sorted(df['喂猫师'].unique()))
+    with c1: cur_date = st.selectbox("📅 切换查看日期", sorted(df['派单日期'].unique()))
+    with c2: cur_sitter = st.selectbox("👤 切换伙伴视角", sorted(df['喂猫师'].unique()))
     
     worker_data = df[(df['派单日期'] == cur_date) & (df['喂猫师'] == cur_sitter)].copy()
     if not worker_data.empty:
@@ -151,9 +151,3 @@ if 'cloud_data' in st.session_state:
         target_cols = ['完成', '顺序', '宠物名字', '房号', '详细地址', '投喂频率', '喂养备注']
         existing = [c for c in target_cols if c in display_df.columns or c == '完成']
         st.data_editor(display_df[existing], hide_index=True, use_container_width=True)
-        
-        st.write("📍 **一键导航**")
-        nav_cols = st.columns(3)
-        for i, row in enumerate(worker_data.itertuples()):
-            nav_url = f"https://uri.amap.com/marker?position={row.lng},{row.lat}&name={urllib.parse.quote(row.详细地址)}"
-            nav_cols[i % 3].link_button(f"{row.顺序}. {getattr(row,'房号','导航')}", nav_url)
