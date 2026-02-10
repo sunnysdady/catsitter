@@ -13,6 +13,41 @@ import numpy as np
 # --- 核心配置 ---
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
+# --- UI 美化函数：线条小狗背景 ---
+def set_cute_background():
+    # 这里使用了一个公开的可爱线条狗素材平铺背景
+    # 你可以随时替换 url(...) 里的链接为你自己的图片地址
+    background_url = "https://img.freepik.com/free-vector/seamless-pattern-with-cute-cartoon-dogs_1284-32655.jpg?w=1060&t=st=1707805000~exp=1707805600~hmac=5a90349154630976188675776927725876736454232700735536624352676651"
+    
+    st.markdown(f"""
+         <style>
+         /* 设置整体背景图片 */
+         .stApp {{
+             background-image: url("{https://iam.marieclaire.com.tw/m800c533h100b0webp100/assets/mc/202509/68BBB6AD90C511757132461.png}");
+             background-attachment: fixed;
+             background-size: 400px; /* 控制图案大小，可自行调整 */
+             background-repeat: repeat;
+         }}
+         /* 让侧边栏和主内容区变成半透明白色，确保文字清晰 */
+         [data-testid="stSidebar"] > div:first-child {{
+             background-color: rgba(255, 255, 255, 0.95) !important;
+             border-right: 2px solid #f0f2f6;
+         }}
+         .block-container {{
+             background-color: rgba(255, 255, 255, 0.92);
+             padding: 2rem;
+             border-radius: 15px;
+             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+             margin-top: 2rem;
+         }}
+         /* 美化标题颜色 */
+         h1, h2, h3 {{
+             color: #FF9F43 !important; /* 使用温暖的橘色 */
+             font-family: 'Comic Sans MS', 'Arial Rounded MT Bold', sans-serif;
+         }}
+         </style>
+         """, unsafe_allow_html=True)
+
 def extract_room(addr):
     if pd.isna(addr): return ""
     match = re.search(r'([a-zA-Z0-9-]{2,})$', str(addr).strip())
@@ -31,12 +66,18 @@ def get_coords_cached(address, city, api_key):
     except: return None, None, "异常"
     return None, None, "未匹配"
 
-st.set_page_config(page_title="太阳爸爸-云端全功能版", layout="wide")
+# 1. 更新品牌名称
+st.set_page_config(page_title="小猫直喂-云端作业台", layout="wide", page_icon="🐱")
+# 2. 应用可爱背景
+set_cute_background()
 
 with st.sidebar:
-    st.header("🔑 团队授权")
-    access_code = st.text_input("暗号", type="password", value="sunnysdady666")
-    if access_code != "sunnysdady666": st.stop()
+    st.header("🔑 小猫直喂-团队授权")
+    access_code = st.text_input("请输入暗号", type="password")
+    # 更新暗号提示
+    if access_code != "xiaomaozhiwei666": 
+        st.info("提示：默认暗号已更新为 xiaomaozhiwei666")
+        st.stop()
     
     st.divider()
     st.header("👤 伙伴出勤")
@@ -45,7 +86,6 @@ with st.sidebar:
     if st.checkbox("依蕊 (出勤)", value=True): active_sitters.append("依蕊")
     
     st.divider()
-    # 建议这里选下周的时间段，方便导出周排期
     date_range = st.date_input("派单日期区间", value=(datetime.now(), datetime.now() + timedelta(days=6)))
     uploaded_file = st.file_uploader("上传《客户主表》Excel", type=["xlsx"])
 
@@ -53,7 +93,6 @@ if uploaded_file and len(active_sitters) > 0:
     raw_df = pd.read_excel(uploaded_file)
     raw_df.columns = raw_df.columns.str.strip()
     
-    # 补全关键列
     if '房号' not in raw_df.columns: raw_df['房号'] = raw_df['详细地址'].apply(extract_room)
     if '宠物名字' not in raw_df.columns: raw_df['宠物名字'] = "猫主子"
     if '指定喂猫师' not in raw_df.columns: raw_df['指定喂猫师'] = np.nan
@@ -112,19 +151,18 @@ if 'cloud_data' in st.session_state:
     df = st.session_state['cloud_data']
     st.divider()
     
-    # --- 新增：云端版导出功能区 ---
     st.subheader("📊 导出专属排期")
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='全量汇总表')
         for sitter in df['喂猫师'].unique():
-            # 这里会为 依蕊、梦蕊 分别创建 Sheet
             df[df['喂猫师'] == sitter].to_excel(writer, index=False, sheet_name=sitter)
     
+    # 更新下载文件名
     st.download_button(
         label="📥 点击下载 Excel 周排期报告 (分人分表)",
         data=output.getvalue(),
-        file_name=f"太阳爸爸派单计划_{datetime.now().strftime('%m%d')}.xlsx",
+        file_name=f"小猫直喂_派单计划_{datetime.now().strftime('%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     
