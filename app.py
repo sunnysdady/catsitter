@@ -39,15 +39,85 @@ def add_feishu_record(fields):
     headers = {"Authorization": f"Bearer {token}"}
     requests.post(url, headers=headers, json={"fields": fields})
 
-# --- 3. 视觉优化：深灰黑专业调度 UI ---
+# --- 3. 视觉优化：全域暗黑精修版 UI ---
 def set_pro_ui():
     st.markdown("""
          <style>
-         .stApp { background-color: #121212 !important; color: #E0E0E0 !important; }
-         [data-testid="stSidebar"] { background-color: #1E1E1E !important; border-right: 1px solid #333; }
-         [data-testid="stSidebar"] .stMarkdown p { color: #FFFFFF !important; font-weight: 700 !important; }
-         .block-container { background-color: rgba(30, 30, 30, 0.95); border-radius: 12px; padding: 2rem; }
-         h1, h2, h3 { color: #FF9F43 !important; }
+         /* 全局基础设定 */
+         .stApp {
+             background-color: #121212 !important; /* 最底层背景：纯黑 */
+             color: #E0E0E0 !important; /* 全局文字：浅灰 */
+         }
+         
+         /* 侧边栏深度定制 */
+         [data-testid="stSidebar"] {
+             background-color: #1E1E1E !important; /* 侧边栏背景：深灰 */
+             border-right: 1px solid #333;
+         }
+         /* 强制侧边栏所有文字和标签为高亮白 */
+         [data-testid="stSidebar"] .stMarkdown p,
+         [data-testid="stSidebar"] label, 
+         [data-testid="stSidebar"] .stCheckbox label p,
+         [data-testid="stSidebar"] .stDateInput label p {
+             color: #FFFFFF !important;
+             font-weight: 600 !important;
+         }
+
+         /* 主内容区域容器 */
+         .block-container {
+             background-color: #1E1E1E !important; /* 主内容背景：深灰，与侧边栏统一 */
+             padding: 2rem;
+             border-radius: 12px;
+             box-shadow: 0 4px 12px rgba(0,0,0,0.5); /* 增加深色阴影 */
+         }
+
+         /* 标题颜色 */
+         h1, h2, h3, h4, h5, h6 {
+             color: #FF9F43 !important; /* 活力橙，醒目 */
+         }
+
+         /* 修复 Tab 标签页的白色背景问题 */
+         .stTabs [data-baseweb="tab-list"] {
+             background-color: #1E1E1E !important;
+             border-bottom: 2px solid #333;
+         }
+         .stTabs [data-baseweb="tab"] {
+             color: #AAAAAA !important; /* 未选中 Tab 文字颜色 */
+             background-color: transparent !important;
+         }
+         .stTabs [aria-selected="true"] {
+             color: #FF9F43 !important; /* 选中 Tab 文字颜色 */
+             border-bottom-color: #FF9F43 !important;
+         }
+
+         /* 修复 Expander (折叠面板) 的白色背景问题 */
+         .streamlit-expanderHeader {
+             background-color: #262626 !important; /* 折叠头背景 */
+             color: #FFFFFF !important;
+             border-radius: 8px;
+         }
+         [data-testid="stExpanderDetails"] {
+             background-color: #1E1E1E !important; /* 折叠内容背景 */
+             border: 1px solid #333;
+             border-top: none;
+             border-radius: 0 0 8px 8px;
+         }
+         
+         /* 修复 Dataframe 和 DataEditor 的背景 */
+         [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+             background-color: #1E1E1E !important;
+         }
+         /* 表格内的文字颜色适配 */
+         [data-testid="stDataFrame"] div, [data-testid="stDataEditor"] div {
+             color: #E0E0E0 !important;
+         }
+
+         /* 输入框和选择框的背景适配 */
+         .stTextInput input, .stSelectbox div[data-baseweb="select"] div, .stNumberInput input, .stDateInput input {
+             background-color: #262626 !important;
+             color: #FFFFFF !important;
+             border-color: #444 !important;
+         }
          </style>
          """, unsafe_allow_html=True)
 
@@ -179,7 +249,7 @@ with tab2:
             ))
             st.data_editor(v_data[['宠物名字', '详细地址', '备注']], use_container_width=True)
             
-            # 下载功能：直接把这一周的分 Sheet 报表导出来发给依蕊
+            # 下载功能
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 res.to_excel(writer, index=False, sheet_name='汇总')
