@@ -12,6 +12,7 @@ import calendar
 # --- 1. 核心配置与 ID 清洗 ---
 def clean_id(raw_id):
     if not raw_id: return ""
+    # 提取 bas/tbl/rec 开头的 20-30 位 ID
     match = re.search(r'(bas|tbl|rec)[a-zA-Z0-9]+', str(raw_id))
     return match.group(0).strip() if match else str(raw_id).strip()
 
@@ -65,7 +66,7 @@ def execute_smart_dispatch(df, active_sitters):
             sitter_load[best] += 1
     return df
 
-# --- 3. 飞书 API 交互 (防崩溃增强版) ---
+# --- 3. 飞书 API 交互 (带 404 诊断) ---
 
 def get_feishu_token():
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -76,7 +77,7 @@ def get_feishu_token():
 
 def fetch_feishu_data():
     token = get_feishu_token()
-    if not token: return pd.DataFrame()
+    if not token or not APP_TOKEN or not TABLE_ID: return pd.DataFrame()
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records"
     headers = {"Authorization": f"Bearer {token}"}
     try:
@@ -92,24 +93,28 @@ def fetch_feishu_data():
         return df
     except: return pd.DataFrame()
 
-def update_feishu_robust(record_id, field_name, value):
-    """【V48 核心】稳健回写引擎：杜绝 JSON 报错"""
+def update_feishu_diagnostic(record_id, field_name, value):
+    """【V49 核心】诊断级同步：显示真实 URL"""
     token = get_feishu_token()
     clean_rid = str(record_id).strip()
+    if not APP_TOKEN or not TABLE_ID or not clean_rid:
+        return False, "ID 缺失，请检查 Secrets 配置"
+    
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records/{clean_rid}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"fields": {field_name: str(value)}}
+    
     try:
         r = requests.patch(url, headers=headers, json=payload, timeout=10)
         if r.status_code == 200:
             return True, "Success"
         else:
-            # 捕获飞书返回的原始错误，不再盲目 json()
-            return False, f"Feishu Error {r.status_code}: {r.text}"
+            # 这里的详细报错会显示在页面上
+            return False, f"HTTP {r.status_code} | Path: .../records/{clean_rid} | Msg: {r.text}"
     except Exception as e:
-        return False, f"Request Failed: {str(e)}"
+        return False, f"Exception: {str(e)}"
 
-# --- 4. 视觉方案 (精准 200*50 与 100*25) ---
+# --- 4. 视觉方案 (200*50 与 100*25) ---
 
 def set_ui():
     st.markdown("""
@@ -129,8 +134,8 @@ def set_ui():
             border: 1.5px solid #000 !important; border-radius: 4px !important;
             box-shadow: 1.5px 1.5px 0px #000; margin: 2px !important;
         }
-        .help-box { background: #f0f7ff; border-left: 5px solid #1890ff; padding: 15px; border-radius: 5px; }
         .stMetric { background: white; padding: 10px; border-radius: 5px; border: 1px solid #eee; }
+        .diagnostic-box { background: #fff1f0; border: 1px solid #ffa39e; padding: 15px; border-radius: 5px; color: #cf1322; font-family: monospace; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -155,9 +160,9 @@ def get_coords(address):
     except: pass
     return None, None
 
-# --- 5. 侧边栏布局重构 (层级优化版) ---
+# --- 5. 侧边栏布局重构 (V49 置顶指挥舱) ---
 
-st.set_page_config(page_title="指挥中心 V48.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V49.0", layout="wide")
 set_ui()
 
 if 'page' not in st.session_state: st.session_state['page'] = "智能看板"
@@ -183,7 +188,7 @@ with st.sidebar:
     
     st.divider()
 
-    # 2. 【居中】功能菜单 (200*50)
+    # 2. 【居中】功能频道按钮 (200*50)
     st.markdown('<div class="main-nav">', unsafe_allow_html=True)
     if st.button("📂 数据中心"): st.session_state['page'] = "数据中心"
     if st.button("📊 任务进度"): st.session_state['page'] = "任务进度"
@@ -193,55 +198,53 @@ with st.sidebar:
 
     st.divider()
 
-    # 3. 【沉底】支持与授权
+    # 3. 【沉底】帮助与授权
     st.markdown('<div class="main-nav">', unsafe_allow_html=True)
     if st.button("📖 帮助文档"): st.session_state['page'] = "帮助文档"
     st.markdown('</div>', unsafe_allow_html=True)
     with st.expander("🔑 团队授权"):
-        auth = st.text_input("暗号", type="password", value="xiaomaozhiwei666")
-        if auth != "xiaomaozhiwei666": st.stop()
+        if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
 
-# --- 6. 频道渲染逻辑 ---
+# --- 6. 逻辑频道渲染 ---
 
 if st.session_state['page'] == "帮助文档":
-    st.title("📖 V48 同步纠偏指引")
-    st.markdown('<div class="help-box">', unsafe_allow_html=True)
-    st.subheader("⚠️ 同步报错排查")
+    st.title("📖 V49 诊断指引")
     st.markdown("""
-    * **报错文本含 403**：飞书应用权限不足，请确认在飞书开放平台已开启“多维表格-读写”权限。
-    * **报错文本含 400/Field Not Found**：飞书原表中的【喂猫师】或【进度】列名被修改或删除了。
-    * **归属记忆**：点击智能看板的“强力锁定”后，系统会将喂猫师姓名推送到飞书，实现永久记忆。
+    ### 🛑 遇到 404 怎么办？
+    1. **检查 ID**：请核对你的 `FEISHU_TABLE_ID` 是否是以 `tbl...` 开头的字符串，而不是工作表的名称。
+    2. **手动方案**：如果同步失败，请点击智能看板的“导出 Excel”，然后手动将人员名单粘贴回飞书。
+    3. **环境自检**：
     """)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.code(f"APP_TOKEN: {APP_TOKEN[:5]}... | TABLE_ID: {TABLE_ID[:5]}...")
 
 elif st.session_state['page'] == "任务进度":
-    st.title("📊 任务进度闭环 (实时上云)")
+    st.title("📊 任务进度闭环")
     df_p = st.session_state['feishu_cache'].copy()
     if not df_p.empty:
         edit = st.data_editor(df_p[['宠物名字', '详细地址', '喂猫师', '进度']], 
                               column_config={"进度": st.column_config.SelectboxColumn("状态", options=["未开始", "已出发", "服务中", "已完成"], required=True)}, 
                               use_container_width=True)
         if st.button("🚀 提交全部更新"):
-            sc = 0; errs = []
+            sc = 0; err_log = ""
             for i, row in edit.iterrows():
                 if row['进度'] != df_p.iloc[i]['进度']:
-                    ok, msg = update_feishu_robust(df_p.iloc[i]['_system_id'], "进度", row['进度'])
+                    ok, msg = update_feishu_diagnostic(df_p.iloc[i]['_system_id'], "进度", row['进度'])
                     if ok: sc += 1
-                    else: errs.append(msg)
-            if sc: st.success(f"已同步 {sc} 条记录。")
-            if errs: st.error(f"失败原因：{errs[0]}")
+                    else: err_log = msg
+            if sc: st.success(f"已同步 {sc} 条。")
+            if err_log: st.error(f"报错详情：{err_log}")
             st.session_state.pop('feishu_cache', None)
 
 elif st.session_state['page'] == "数据中心":
-    st.title("📂 云端数据快照")
-    up = st.file_uploader("导入 Excel", type=["xlsx"])
-    if up and st.button("🚀 推送飞书"):
+    st.title("📂 云端快照同步")
+    up = st.file_uploader("导入新订单", type=["xlsx"])
+    if up and st.button("🚀 推送云端"):
         du = pd.read_excel(up); pb = st.progress(0); tk = get_feishu_token()
         for i, (_, r) in enumerate(du.iterrows()):
             f = {"详细地址": str(r['详细地址']).strip(), "宠物名字": str(r.get('宠物名字', '小猫')).strip(), "服务开始日期": int(datetime.combine(pd.to_datetime(r['服务开始日期']), datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(pd.to_datetime(r['服务结束日期']), datetime.min.time()).timestamp()*1000)}
             requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {tk}"}, json={"fields": f})
             pb.progress((i + 1) / len(du))
-        st.success("批量成功！"); st.session_state.pop('feishu_cache', None); st.rerun()
+        st.success("批量同步成功！"); st.session_state.pop('feishu_cache', None); st.rerun()
     st.button("🔄 刷新预览", on_click=lambda: st.session_state.pop('feishu_cache', None))
     dp = st.session_state['feishu_cache'].copy()
     if not dp.empty:
@@ -251,7 +254,7 @@ elif st.session_state['page'] == "数据中心":
         st.dataframe(disp, use_container_width=True)
 
 elif st.session_state['page'] == "智能看板":
-    st.title("🚀 指挥中心-调度拟定")
+    st.title("🚀 调度拟定与归属锁定")
     if not st.session_state['feishu_cache'].empty and isinstance(d_sel, tuple) and len(d_sel) == 2:
         if st.button("✨ 1. 拟定调度方案"):
             ap = []; ae = []; dk = st.session_state['feishu_cache'].copy()
@@ -277,25 +280,25 @@ elif st.session_state['page'] == "智能看板":
                 pb.progress((i + 1) / len(days))
             st.session_state['fp'] = pd.concat(ap) if ap else None
             st.session_state['fe'] = pd.concat(ae) if ae else None
-            st.success("✅ 方案拟定完成！地图已自动对焦。")
+            st.success("✅ 方案拟定完成！")
 
         if st.session_state.get('fp') is not None:
-            # 强力锁定核心逻辑：带报错追溯
-            if st.button("🔒 2. 强力锁定人员归属 (全量强刷云端)"):
-                with st.spinner("正在同步云端记录..."):
-                    lc = 0; err_list = []
+            # 强力锁定：带诊断反馈
+            if st.button("🔒 2. 强力锁定人员归属 (同步至云端)"):
+                with st.spinner("正在强力同步归属关系..."):
+                    lc = 0; diag_msg = ""
                     unique_plan = st.session_state['fp'].drop_duplicates(subset=['宠物名字', '详细地址'])
                     for _, row in unique_plan.iterrows():
-                        ok, msg = update_feishu_robust(row['_system_id'], "喂猫师", row['喂猫师'])
+                        ok, msg = update_feishu_diagnostic(row['_system_id'], "喂猫师", row['喂猫师'])
                         if ok: lc += 1
-                        else: err_list.append(msg)
-                    if lc > 0: st.success(f"同步成功！已为 {lc} 条记录锁定。")
-                    if err_list: st.error(f"首个错误详情：{err_list[0]}")
+                        else: diag_msg = msg
+                    if lc > 0: st.success(f"同步成功！已锁定 {lc} 条记录。")
+                    if diag_msg: st.error(f"同步异常报告：{diag_msg}")
                     st.session_state.pop('feishu_cache', None)
             
-            st.download_button("📥 3. 导出 Excel 文档", data=generate_excel_multisheet(st.session_state['fp']), file_name="Dispatch.xlsx")
+            st.download_button("📥 3. 导出多 Sheet Excel", data=generate_excel_multisheet(st.session_state['fp']), file_name="Dispatch.xlsx")
             res_f = st.session_state['fp']
-            vd = st.selectbox("📅 查看日期", sorted(res_f['作业日期'].unique()))
+            vd = st.selectbox("📅 选择日期", sorted(res_f['作业日期'].unique()))
             v_data = res_f[res_f['作业日期'] == vd]
             st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=11),
                 layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color='color', get_radius=350, pickable=True)]))
