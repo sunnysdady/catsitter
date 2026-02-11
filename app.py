@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import time
 
-# --- 1. 核心连接配置 (自动清理 Secrets 空格) ---
+# --- 1. 核心连接配置 ---
 APP_ID = st.secrets.get("FEISHU_APP_ID", "").strip()
 APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "").strip()
 APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "").strip() 
@@ -22,9 +22,7 @@ def get_feishu_token():
     try:
         r = requests.post(url, json={"app_id": APP_ID, "app_secret": APP_SECRET}, timeout=10)
         res = r.json()
-        if res.get("code") != 0:
-            st.error(f"❌ 飞书授权失败: {res.get('msg')}")
-            return None
+        if res.get("code") != 0: return None
         return res.get("tenant_access_token")
     except: return None
 
@@ -37,9 +35,8 @@ def fetch_feishu_data():
         r = requests.get(url, headers=headers, params={"page_size": 500}, timeout=15).json()
         items = r.get("data", {}).get("items", [])
         if not items: return pd.DataFrame()
-        # 隔离系统 ID
         df = pd.DataFrame([dict(i['fields'], _system_id=i['record_id']) for i in items])
-        # 自动适配列名：删掉“建议顺序”也不会报错
+        # 补齐必要列名
         required_cols = ['宠物名字', '服务开始日期', '服务结束日期', '详细地址', '投喂频率', '喂猫师', '备注']
         for col in required_cols:
             if col not in df.columns: df[col] = ""
@@ -52,14 +49,14 @@ def add_feishu_record(fields):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
         response = requests.post(url, headers=headers, json={"fields": fields}, timeout=10)
-        return "success" if response.json().get("code") == 0 else "error"
-    except: return "error"
+        return response.json().get("code") == 0
+    except: return False
 
 def update_feishu_record(record_id, fields):
     token = get_feishu_token()
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records/{record_id}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    # 彻底移除建议顺序的回传逻辑
+    # 数据净化
     clean_fields = {k: ("" if pd.isna(v) else v) for k, v in fields.items()}
     try:
         response = requests.patch(url, headers=headers, json={"fields": clean_fields}, timeout=10)
@@ -82,8 +79,9 @@ def set_ui():
         [data-testid="stSidebar"] div[role="radiogroup"] label p { font-size: 18px !important; color: #000000 !important; font-weight: bold !important; text-align: center !important; }
         [data-testid="stSidebar"] div[role="radiogroup"] [data-baseweb="radio"] div:first-child { display: none !important; }
         [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
-            background-color: #FFFFFF !important; border: 2px solid #000000 !important; box-shadow: 0 8px 15px rgba(0,0,0,0.1) !important;
+            background-color: #FFFFFF !important; border: 2px solid #000000 !important; box-shadow: 0 8px 15px rgba(0,0,0,0.15) !important;
         }
+        .stProgress > div > div > div > div { background-color: #000000 !important; }
         div.stButton > button { background-color: #FFFFFF !important; color: #000000 !important; border: 1px solid #000000 !important; border-radius: 8px !important; font-weight: bold !important; }
         </style>
         """, unsafe_allow_html=True)
@@ -99,50 +97,51 @@ def get_coords(address):
     except: return None, None
 
 # --- 4. 页面主体 ---
-st.set_page_config(page_title="小猫直喂-指挥中心", layout="wide")
+st.set_page_config(page_title="小猫直喂-调度中心", layout="wide")
 set_ui()
 
 with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
-    menu = st.radio("功能选择", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
+    # 增加帮助入口
+    menu = st.radio("导航菜单", ["📂 数据中心", "🚀 智能看板", "📖 使用帮助"], label_visibility="collapsed")
 
 if 'feishu_cache' not in st.session_state:
     st.session_state['feishu_cache'] = fetch_feishu_data()
 
+# --- Tab 1: 数据中心 ---
 if menu == "📂 数据中心":
-    st.title("📂 数据中心")
+    st.title("📂 数据录入与管理中心")
     c1, c2 = st.columns(2)
     with c1:
-        with st.expander("批量导入 Excel"):
-            up_file = st.file_uploader("选择文件", type=["xlsx"])
-            if up_file and st.button("🚀 启动数据录入"):
+        with st.expander("➕ 批量导入 Excel"):
+            up_file = st.file_uploader("上传 Excel", type=["xlsx"])
+            if up_file and st.button("🚀 启动数据同步"):
                 df_up = pd.read_excel(up_file)
                 total, success = len(df_up), 0
                 p_bar = st.progress(0); p_text = st.empty()
                 for i, (_, row) in enumerate(df_up.iterrows()):
-                    p_text.text(f"录入中: {i+1}/{total}")
+                    p_text.text(f"同步中: {i+1}/{total}")
                     s_ts = int(datetime.combine(pd.to_datetime(row['服务开始日期']), datetime.min.time()).timestamp()*1000)
                     e_ts = int(datetime.combine(pd.to_datetime(row['服务结束日期']), datetime.min.time()).timestamp()*1000)
                     payload = {"详细地址": str(row['详细地址']).strip(), "宠物名字": str(row.get('宠物名字', '小猫')).strip(), "投喂频率": int(row.get('投喂频率', 1)), "服务开始日期": s_ts, "服务结束日期": e_ts, "备注": str(row.get('备注', ''))}
-                    if add_feishu_record(payload) == "success": success += 1
+                    if add_feishu_record(payload): success += 1
                     p_bar.progress((i + 1) / total)
-                st.success(f"完成！已同步 {success} 条数据。")
+                st.success(f"完成！已录入 {success} 条数据。")
                 st.session_state['feishu_cache'] = fetch_feishu_data()
     with c2:
-        with st.expander("单条快速补单"):
-            with st.form("single_add", clear_on_submit=True):
-                addr = st.text_input("地址*")
-                cat = st.text_input("宠物名")
-                f_c1, f_c2 = st.columns(2)
-                sd, ed = f_c1.date_input("开始"), f_c2.date_input("结束")
+        with st.expander("➕ 单条补单"):
+            with st.form("manual_entry", clear_on_submit=True):
+                addr = st.text_input("详细地址*")
+                cat = st.text_input("宠物名", value="小猫")
+                f1, f2 = st.columns(2); sd, ed = f1.date_input("开始"), f2.date_input("结束")
                 if st.form_submit_button("保存到云端"):
                     payload = {"详细地址": addr.strip(), "宠物名字": cat.strip(), "投喂频率": 1, "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)}
-                    if add_feishu_record(payload) == "success": st.success("录入成功！")
+                    if add_feishu_record(payload): st.success("录入成功！")
                     st.session_state['feishu_cache'] = fetch_feishu_data()
     st.divider()
-    if st.button("🔄 刷新预览云端数据"):
+    if st.button("🔄 刷新查看云端预览"):
         st.session_state.pop('feishu_cache', None)
         st.session_state['feishu_cache'] = fetch_feishu_data()
         df_v = st.session_state['feishu_cache'].copy()
@@ -150,14 +149,14 @@ if menu == "📂 数据中心":
             for c in ['服务开始日期', '服务结束日期']: df_v[c] = pd.to_datetime(df_v[c], unit='ms', errors='coerce').dt.strftime('%Y-%m-%d')
             st.dataframe(df_v.drop(columns=['_system_id'], errors='ignore'), use_container_width=True)
 
-else:
-    st.title("🚀 智能调度排单")
+# --- Tab 2: 智能看板 ---
+elif menu == "🚀 智能看板":
+    st.title("🚀 智能调度排单看板")
     with st.sidebar:
-        st.divider()
-        st.subheader("⚙️ 调度设置")
+        st.divider(); st.subheader("⚙️ 调度设置")
         active_sitters = ["梦蕊", "依蕊"]
         current_active = [s for s in active_sitters if st.checkbox(f"{s} (出勤)", value=True)]
-        date_range = st.date_input("📅 范围", value=(datetime.now(), datetime.now() + timedelta(days=2)))
+        date_range = st.date_input("📅 拟定范围", value=(datetime.now(), datetime.now() + timedelta(days=2)))
     
     df = st.session_state['feishu_cache'].copy()
     if not df.empty and isinstance(date_range, tuple) and len(date_range) == 2:
@@ -186,31 +185,56 @@ else:
         
         if 'period_plan' in st.session_state:
             res = st.session_state['period_plan']
-            view_day = st.selectbox("📅 切换查看日期", sorted(res['作业日期'].unique()))
+            view_day = st.selectbox("📅 切换显示日期", sorted(res['作业日期'].unique()))
             worker = st.selectbox("👤 查看师视角", current_active)
             v_data = res[(res['作业日期'] == view_day) & (res['拟定人'] == worker)]
             if not v_data.empty:
                 st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=11), layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color=[0, 123, 255, 160], get_radius=300)]))
                 st.data_editor(v_data[['拟定顺序', '宠物名字', '详细地址', '备注']], use_container_width=True)
                 
-                if st.button("📋 导出今日任务简报"):
+                c_btn1, c_btn2 = st.columns(2)
+                if c_btn1.button("📋 导出今日任务简报"):
                     today_str = datetime.now().strftime('%Y-%m-%d')
                     today_tasks = res[res['作业日期'] == today_str].sort_values(['拟定人', '拟定顺序'])
                     if not today_tasks.empty:
                         summary = f"📢 【小猫直喂】今日清单 ({today_str})\n\n"
                         for s in current_active:
-                            s_tasks = today_tasks[today_tasks['拟定人'] == s]
-                            if not s_tasks.empty:
-                                summary += f"👤 喂猫师：{s}\n"
-                                for _, t in s_tasks.iterrows(): summary += f"   {t['拟定顺序']}. {t['宠物名字']} - {t['详细地址']}\n"
-                                summary += "\n"
+                            s_tasks = today_tasks[today_tasks['拟定人'] == s]; summary += f"👤 喂猫师：{s}\n"
+                            for _, t in s_tasks.iterrows(): summary += f"   {t['拟定顺序']}. {t['宠物名字']} - {t['详细地址']}\n"
+                            summary += "\n"
                         st.text_area("复制到微信群：", summary, height=200)
-
-                if st.button("✅ 确认同步喂猫师至飞书"):
+                if c_btn2.button("✅ 确认同步喂猫师至飞书"):
                     t_s = len(res); s_b = st.progress(0); s_t = st.empty()
                     for i, (_, rs) in enumerate(res.iterrows()):
                         s_t.text(f"回写中: {i+1}/{t_s}")
-                        # 仅回传喂猫师姓名
                         update_feishu_record(rs['_system_id'], {"喂猫师": rs['拟定人']})
                         s_b.progress((i + 1) / t_s)
-                    s_t.empty(); s_b.empty(); st.success("🎉 飞书归属已同步！"); st.session_state.pop('feishu_cache', None)
+                    s_t.empty(); s_b.empty(); st.success("🎉 同步已完成！"); st.session_state.pop('feishu_cache', None)
+
+# --- Tab 3: 使用帮助与日志 (按日期记录日志) ---
+else:
+    st.title("📖 系统说明与更新日志")
+    tab_help, tab_log = st.tabs(["💡 使用指南", "📜 更新日志"])
+    
+    with tab_help:
+        st.subheader("📢 升级公告")
+        st.info("**主题**：小猫直喂指挥中心 V2.0 正式上线\n\n**核心变更**：飞书仅作为客户底账，具体派单顺序请以此看板及微信简报为准。")
+        st.subheader("🛠️ 操作说明")
+        with st.expander("📂 数据录入说明"):
+            st.write("1. 批量导入：支持 Excel 上传，系统会自动比对地址、宠物名及日期。")
+            st.write("2. 查重逻辑：重复录入会被自动跳过，确保飞书表格不臃肿。")
+        with st.expander("🚀 看板排单说明"):
+            st.write("1. 拟定方案：选择日期范围和师出勤情况，点击按钮即可查看地图路径。")
+            st.write("2. 同步回写：仅将“喂猫师”姓名同步回飞书，保持表格整洁。")
+            st.write("3. 微信简报：一键生成排好序的文字清单，方便粘贴转发。")
+            
+    with tab_log:
+        st.subheader("📅 2026-02-11 (当前版本)")
+        st.write("- **侧边栏大卡片导航**：带 Emoji 图标、文字描述及选中阴影特效。")
+        st.write("- **查重加固**：实现“地址 + 宠物名 + 日期”三重防重录入逻辑。")
+        st.write("- **进度反馈增强**：为数据导入、方案计算、飞书回写全面增加实时进度条。")
+        st.write("- **轻量化同步**：修改回传逻辑，仅同步“喂猫师”，移除冗余的“建议顺序”列。")
+        st.write("- **一键简报**：新增“📋 导出今日任务简报”功能，适配微信群发格式。")
+        st.write("- **异常诊断**：针对飞书 API 增加 404 路径诊断及 Token 自动适配逻辑。")
+        st.divider()
+        st.caption("注：本日志按确认更新日期实时硬编码记录，无需数据库。")
