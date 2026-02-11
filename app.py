@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import re
 import io
+import calendar
 
 # --- 1. 核心配置与参数清洗 ---
 def clean_id(raw_id):
@@ -95,7 +96,7 @@ def fetch_feishu_data():
         return df
     except: return pd.DataFrame()
 
-# --- 4. 视觉与导出工具 (30px) ---
+# --- 4. 视觉与导出工具 (200*50 精准适配) ---
 
 def generate_excel_multisheet(df):
     output = io.BytesIO()
@@ -113,15 +114,18 @@ def generate_excel_multisheet(df):
 def set_ui():
     st.markdown("""
         <style>
+        /* 侧边栏主功能模块：锁定 200*50 比例 */
         [data-testid="stSidebar"] div.stButton > button {
-            width: 100% !important; height: 100px !important;
-            border: 4px solid #000 !important; border-radius: 15px !important;
-            font-size: 30px !important; font-weight: 900 !important;
-            box-shadow: 6px 6px 0px #000; background-color: #FFFFFF !important;
+            width: 200px !important; height: 50px !important;
+            border: 3px solid #000 !important; border-radius: 10px !important;
+            font-size: 20px !important; font-weight: 800 !important;
+            box-shadow: 4px 4px 0px #000; background-color: #FFFFFF !important;
+            margin-bottom: 10px !important; display: block; margin-left: auto; margin-right: auto;
         }
-        .small-btn button { height: 50px !important; font-size: 18px !important; }
+        /* 快捷调度小按钮 */
+        .q-btn button { height: 40px !important; font-size: 14px !important; border-radius: 5px !important; }
         .stDataFrame { font-size: 16px !important; }
-        .info-card { background: #f8f9fa; border-left: 5px solid #000; padding: 20px; border-radius: 10px; margin-bottom: 10px; }
+        .info-card { background: #f8f9fa; border-left: 5px solid #000; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -136,9 +140,9 @@ def get_coords(address):
     except: pass
     return None, None
 
-# --- 5. 流程中心 ---
+# --- 5. 页面控制 ---
 
-st.set_page_config(page_title="指挥中心 V38.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V39.0", layout="wide")
 set_ui()
 
 if 'page' not in st.session_state: st.session_state['page'] = "智能看板"
@@ -148,46 +152,39 @@ with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
+    # 4 个主功能模块 (200*50)
     if st.button("📂 数据中心"): st.session_state['page'] = "数据中心"
     if st.button("📝 订单信息"): st.session_state['page'] = "订单信息"
     if st.button("🚀 智能看板"): st.session_state['page'] = "智能看板"
     if st.button("📖 帮助文档"): st.session_state['page'] = "帮助文档"
 
-# --- 6. 各模块逻辑渲染 ---
+# --- 6. 逻辑模块渲染 ---
 
 # A. 帮助文档
 if st.session_state['page'] == "帮助文档":
-    st.title("📖 小猫直喂-系统操作指南")
+    st.title("📖 帮助文档回归")
     st.markdown("""
-    ### 1. 数据同步逻辑
-    * 系统通过 **数据中心** 读取飞书原表。
-    * 排单拟定结果仅存在于本页面，**不会自动写回飞书**。如需下发任务，请使用 **Excel 导出** 或 **微信简报**。
-    
-    ### 2. 调度算法说明
-    * **一猫一人固定**：系统自动识别宠物名+地址的唯一组合，若历史上曾由特定喂猫师负责，则优先分配给该人。
-    * **路径优化**：系统按高德地图经纬度计算直线距离，并按照 $1 \rightarrow 2 \rightarrow 3$ 的最优顺序排列。
-    
-    ### 3. 排单操作
-    * 请在 **智能看板** 侧边栏选择日期区间（需点选两个日期以确定范围）。
-    * 导出 Excel 会自动按喂猫师姓名分 Sheet 存放。
+    ### 📌 系统操作核心指引
+    1. **数据入口**：在“数据中心”上传 Excel 或单条录入，数据即时进入飞书云端。
+    2. **订单自检**：在“订单信息”中搜索猫咪，可查看其锁定的喂猫师与备注。
+    3. **智能调度**：在“智能看板”拟定方案，方案**仅在页面展示**，不改变飞书原始数据，下发任务请点击“导出 Excel”。
+    4. **一猫一人**：系统会自动继承历史派单关系，无需重复指定。
     """)
 
-# B. 订单信息 (热力图)
+# B. 订单信息
 elif st.session_state['page'] == "订单信息":
-    st.title("📝 订单全景 (搜索与热力)")
+    st.title("📝 订单全景 (支持搜索)")
     df_info = st.session_state['feishu_cache'].copy()
     if not df_info.empty:
-        search_cat = st.text_input("🔍 宠物搜索 (锁定归属师)", placeholder="输入名字...")
+        search_cat = st.text_input("🔍 搜索宠物名", placeholder="输入名字...")
         if search_cat: df_info = df_info[df_info['宠物名字'].str.contains(search_cat, na=False)]
-        
-        with ThreadPoolExecutor(max_workers=15) as ex:
-            coords = list(ex.map(get_coords, df_info['详细地址']))
+        with ThreadPoolExecutor(max_workers=15) as ex: coords = list(ex.map(get_coords, df_info['详细地址']))
         df_info[['lng', 'lat']] = pd.DataFrame(coords, index=df_info.index)
         df_map = df_info.dropna(subset=['lng', 'lat'])
         if not df_map.empty:
             st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=df_map['lng'].mean(), latitude=df_map['lat'].mean(), zoom=10),
                 layers=[pdk.Layer("HeatmapLayer", df_map, get_position='[lng, lat]', radius_pixels=60, intensity=1)]))
-        st.divider(); st.dataframe(df_info[['宠物名字', '详细地址', '喂猫师', '备注']], use_container_width=True)
+        st.dataframe(df_info[['宠物名字', '详细地址', '喂猫师', '备注']], use_container_width=True)
 
 # C. 数据中心
 elif st.session_state['page'] == "数据中心":
@@ -205,8 +202,8 @@ elif st.session_state['page'] == "数据中心":
                 st.success("批量成功！"); st.session_state.pop('feishu_cache', None); st.rerun()
     with c2:
         with st.expander("✍️ 单条手动录入"):
-            with st.form("manual"):
-                a = st.text_input("地址*"); n = st.text_input("名字"); sd = st.date_input("开始日期"); ed = st.date_input("结束日期")
+            with st.form("manual_cat"):
+                a = st.text_input("地址*"); n = st.text_input("名"); sd = st.date_input("开始"); ed = st.date_input("结束")
                 if st.form_submit_button("💾 保存"):
                     f = {"详细地址": a.strip(), "宠物名字": n.strip(), "投喂频率": 1, "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)}
                     requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {get_feishu_token()}"}, json={"fields": f})
@@ -224,20 +221,23 @@ elif st.session_state['page'] == "智能看板":
     st.title("🚀 调度指挥中心")
     df_kb = st.session_state['feishu_cache'].copy()
     
-    # 侧边栏：优化建议：图标缩小与区间选择
     with st.sidebar:
-        st.divider(); st.subheader("📅 快速调度")
-        col_s1, col_s2 = st.columns(2)
-        with col_s1: 
-            if st.markdown('<div class="small-btn">', unsafe_allow_html=True) or st.button("今天"):
-                st.session_state['d_range'] = (datetime.now().date(), datetime.now().date() + timedelta(days=1))
-        with col_s2:
-            if st.button("明天"):
-                st.session_state['d_range'] = (datetime.now().date() + timedelta(days=1), datetime.now().date() + timedelta(days=2))
+        st.divider(); st.subheader("📅 快速选择范围")
+        today = datetime.now().date()
+        col_q1, col_q2 = st.columns(2)
+        with col_q1:
+            if st.markdown('<div class="q-btn">', unsafe_allow_html=True) or st.button("📍 今天"):
+                st.session_state['range'] = (today, today + timedelta(days=1))
+            if st.button("📍 本周"):
+                st.session_state['range'] = (today - timedelta(days=today.weekday()), today + timedelta(days=(6 - today.weekday()) + 1))
+        with col_q2:
+            if st.button("📍 明天"):
+                st.session_state['range'] = (today + timedelta(days=1), today + timedelta(days=2))
+            if st.button("📍 本月"):
+                st.session_state['range'] = (today.replace(day=1), today.replace(day=calendar.monthrange(today.year, today.month)[1]) + timedelta(days=1))
         
-        # 核心：确保区间选择逻辑
-        date_sel = st.date_input("调度范围 (点选两个日期)", value=st.session_state.get('d_range', (datetime.now().date(), datetime.now().date() + timedelta(days=1))))
-        
+        # 核心：支持日期区间选择
+        date_sel = st.date_input("调度范围 (点选开始与结束日期)", value=st.session_state.get('range', (today, today + timedelta(days=1))))
         sitters = ["梦蕊", "依蕊"]
         current_active = [s for s in sitters if st.checkbox(f"{s} (出勤)", value=True)]
 
@@ -262,22 +262,18 @@ elif st.session_state['page'] == "智能看板":
                         if day_res:
                             cd = pd.concat(day_res); cd['作业日期'] = d.strftime('%Y-%m-%d'); all_plans.append(cd)
                 p_bar.progress((i + 1) / len(days))
-            st.session_state['final_plan_v38'] = pd.concat(all_plans) if all_plans else None
-            st.success("✅ 方案生成！自动开启视野对焦。")
+            st.session_state['final_plan_v39'] = pd.concat(all_plans) if all_plans else None
+            st.success("✅ 方案拟定完成！地图已自动对焦。")
 
-        if st.session_state.get('final_plan_v38') is not None:
-            res_f = st.session_state['final_plan_v38']
-            st.download_button("📥 导出多 Sheet Excel", data=generate_excel_multisheet(res_f), file_name="Dispatch.xlsx")
-            
+        if st.session_state.get('final_plan_v39') is not None:
+            res_f = st.session_state['final_plan_v39']
+            st.download_button("📥 导出全量 Excel (含分页)", data=generate_excel_multisheet(res_f), file_name="Dispatch.xlsx")
             c_f1, c_f2 = st.columns(2)
-            v_day = c_f1.selectbox("📅 选择日期", sorted(res_f['作业日期'].unique()))
+            v_day = c_f1.selectbox("📅 查看日期", sorted(res_f['作业日期'].unique()))
             v_sit = c_f2.selectbox("👤 筛选人员", ["全部"] + sorted(res_f[res_f['作业日期'] == v_day]['喂猫师'].unique().tolist()))
-            
             v_data = res_f[res_f['作业日期'] == v_day]
             if v_sit != "全部": v_data = v_data[v_data['喂猫师'] == v_sit]
-            
             if not v_data.empty:
-                # 自动对焦逻辑 (Auto-Focus)
                 st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=11),
                     layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color='color', get_radius=350, pickable=True)]))
                 st.markdown("🔵 **梦蕊** | 🟠 **依蕊**")
