@@ -16,7 +16,7 @@ APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "")
 TABLE_ID = st.secrets.get("FEISHU_TABLE_ID", "") 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
-# --- 2. 核心功能逻辑 (保持不变) ---
+# --- 2. 核心功能逻辑 ---
 def get_feishu_token():
     url = "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal"
     r = requests.post(url, json={"app_id": APP_ID, "app_secret": APP_SECRET})
@@ -60,47 +60,56 @@ def update_feishu_record(record_id, fields):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     requests.patch(url, headers=headers, json={"fields": fields})
 
-# --- 3. 视觉强化：卡片导航 CSS ---
+# --- 3. 视觉强化：高对比度导航 CSS ---
 def set_ui():
     st.markdown("""
         <style>
-        /* 基础设置 */
+        /* 基础与标题设置 */
         html, body, [data-testid="stAppViewContainer"] { background-color: #FFFFFF !important; color: #000000 !important; font-family: 'Microsoft YaHei', Arial !important; }
         header { visibility: hidden !important; }
         h1, h2, h3 { color: #000000 !important; border-bottom: 2px solid #000000; padding-bottom: 5px; }
 
-        /* 侧边栏定制 */
-        [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E9ECEF !important; width: 300px !important; }
+        /* 侧边栏整体 */
+        [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E9ECEF !important; }
         
-        /* 隐藏 Radio 原生选项圈 */
-        [data-testid="stSidebar"] div[role="radiogroup"] > div { display: flex; flex-direction: column; gap: 15px; }
+        /* 导航卡片列表 */
+        [data-testid="stSidebar"] div[role="radiogroup"] { display: flex; flex-direction: column; gap: 20px; padding: 10px; }
+        
+        /* 单个导航卡片的基础态 (修复色块问题) */
         [data-testid="stSidebar"] div[role="radiogroup"] label {
-            background-color: #FFFFFF !important;
-            border: 1px solid #EEEEEE !important;
-            padding: 20px 15px !important;
+            background-color: #F8F9FA !important; /* 浅灰背景 */
+            border: 1px solid #DEE2E6 !important; /* 清晰边框 */
+            padding: 25px 15px !important;
             border-radius: 12px !important;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease-in-out;
             width: 100% !important;
         }
+        
+        /* 导航卡片内的文字显影与放大 */
         [data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-            font-size: 22px !important; /* 图标文字放大 */
+            font-size: 24px !important;
+            color: #495057 !important;
             font-weight: bold !important;
             text-align: center !important;
         }
-        /* 隐藏单选框的小圆圈 */
-        [data-testid="stSidebar"] div[role="radiogroup"] [data-testid="stWidgetLabel"] { display: none !important; }
-        div[data-testid="stSidebarUserContent"] div[role="radiogroup"] [data-baseweb="radio"] div:first-child { display: none !important; }
 
-        /* 选中态：加阴影和背景 */
+        /* 隐藏原生单选圈 */
+        [data-testid="stSidebar"] div[role="radiogroup"] [data-baseweb="radio"] div:first-child { display: none !important; }
+
+        /* 选中态：高对比度阴影与加粗边框 */
         [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
-            border: 2px solid #000000 !important;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.15) !important;
-            transform: translateY(-2px);
+            background-color: #FFFFFF !important;
+            border: 3px solid #000000 !important;
+            box-shadow: 0 12px 24px rgba(0,0,0,0.2) !important;
+            transform: scale(1.02);
+        }
+        [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) p {
+            color: #000000 !important;
         }
 
-        /* 按钮与输入框 */
-        div.stButton > button { background-color: #FFFFFF !important; color: #000000 !important; border: 1px solid #000000 !important; border-radius: 8px !important; height: 3rem !important; font-weight: bold !important; }
+        /* 通用按钮 */
+        div.stButton > button { background-color: #FFFFFF !important; color: #000000 !important; border: 1px solid #000000 !important; border-radius: 8px !important; font-weight: bold !important; }
         div.stButton > button:hover { background-color: #000000 !important; color: #FFFFFF !important; }
         </style>
         """, unsafe_allow_html=True)
@@ -117,14 +126,14 @@ def get_coords(address):
     return None, None
 
 # --- 4. 页面主体 ---
-st.set_page_config(page_title="小猫直喂-调度指挥", layout="wide")
+st.set_page_config(page_title="小猫直喂-调度指挥中心", layout="wide")
 set_ui()
 
 with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
-    # 导航入口
+    # 图标放大后的导航
     menu = st.radio("导航菜单", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
 
 if 'feishu_cache' not in st.session_state:
@@ -150,7 +159,7 @@ if menu == "📂 数据中心":
                     elif res == "duplicate": skipped += 1
                     p_bar.progress((i + 1) / total)
                 p_text.empty(); p_bar.empty()
-                st.success(f"✅ 完成！同步 {success} 条，跳过重复 {skipped} 条。")
+                st.success(f"✅ 完成！成功录入 {success} 条，跳过重复 {skipped} 条。")
                 st.session_state['feishu_cache'] = fetch_feishu_data()
     with c2:
         with st.expander("➕ 单条补单"):
@@ -158,13 +167,13 @@ if menu == "📂 数据中心":
                 addr = st.text_input("详细地址*")
                 cat = st.text_input("宠物名", value="小胖猫")
                 f1, f2 = st.columns(2)
-                sd, ed = f1.date_input("开始日期"), f2.date_input("结束日期")
+                sd, ed = f1.date_input("开始"), f2.date_input("结束")
                 freq = st.number_input("频率", min_value=1, value=1)
                 if st.form_submit_button("保存到云端"):
                     payload = {"详细地址": addr.strip(), "宠物名字": cat.strip(), "投喂频率": freq, "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)}
                     res = add_feishu_record(payload)
                     if res == "success": st.balloons(); st.success("✅ 录入成功！")
-                    elif res == "duplicate": st.error("❌ 该笔订单已存在。")
+                    elif res == "duplicate": st.error("❌ 该订单已存在。")
                     st.session_state['feishu_cache'] = fetch_feishu_data()
     st.divider()
     if st.button("🔄 刷新预览"):
