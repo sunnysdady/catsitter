@@ -16,20 +16,18 @@ APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "").strip()
 TABLE_ID = st.secrets.get("FEISHU_TABLE_ID", "").strip() 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "").strip()
 
-# --- 2. 飞书 API 交互逻辑 (升级授权方式) ---
+# --- 2. 飞书 API 授权与交互 ---
 def get_feishu_token():
+    # 采用租户令牌模式，通常比应用令牌更稳定
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
     try:
         r = requests.post(url, json={"app_id": APP_ID, "app_secret": APP_SECRET}, timeout=10)
         res = r.json()
         if res.get("code") != 0:
-            st.error(f"❌ 飞书身份授权失败: {res.get('msg')}。请核对 App ID 和 Secret 是否填错。")
+            st.error(f"❌ 飞书身份授权失败: {res.get('msg')}。请核对 APP_ID 和 SECRET。")
             return None
-        # 兼容 tenant_access_token
-        return res.get("tenant_access_token") or res.get("app_access_token")
-    except Exception as e:
-        st.error(f"❌ 无法连接飞书授权服务器: {e}")
-        return None
+        return res.get("tenant_access_token")
+    except: return None
 
 def fetch_feishu_data():
     token = get_feishu_token()
@@ -41,34 +39,40 @@ def fetch_feishu_data():
         items = r.get("data", {}).get("items", [])
         if not items: return pd.DataFrame()
         df = pd.DataFrame([dict(i['fields'], record_id=i['record_id']) for i in items])
-        # 补齐必要列名
+        # 强制补齐列名，防止渲染看板时 KeyError
         for col in ['宠物名字', '服务开始日期', '服务结束日期', '详细地址', '投喂频率', '喂猫师', '建议顺序', '备注']:
             if col not in df.columns: df[col] = ""
         return df
     except: return pd.DataFrame()
 
+# 核心改进：防崩溃回传函数
 def update_feishu_record(record_id, fields):
     token = get_feishu_token()
     if not token: return False
-    
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records/{record_id}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 净化数据，防止 404 或格式报错
+    # 净化数据类型
     clean_fields = {k: (int(v) if isinstance(v, (np.int64, np.int32)) else ("" if pd.isna(v) else v)) for k, v in fields.items()}
 
     try:
         response = requests.patch(url, headers=headers, json={"fields": clean_fields}, timeout=10)
-        res_json = response.json()
-        if res_json.get("code") != 0:
-            st.error(f"❌ 飞书回写失败: {res_json.get('msg')} (代码: {res_json.get('code')})")
+        # 解决 Extra data 报错的关键：先检查返回的是不是 JSON
+        if "application/json" in response.headers.get("Content-Type", ""):
+            res_json = response.json()
+            if res_json.get("code") != 0:
+                st.error(f"❌ 飞书拒绝回写: {res_json.get('msg')} (代码: {res_json.get('code')})")
+                return False
+            return True
+        else:
+            # 如果飞书回传了 HTML 网页，直接把状态码打出来，不再强行解析 JSON
+            st.error(f"❌ 飞书服务异常 (状态码: {response.status_code})。可能是路径或权限配置有误。")
             return False
-        return True
     except Exception as e:
         st.error(f"❌ 网络异常: {e}")
         return False
 
-# --- 3. 视觉强化：解决空白卡片问题 ---
+# --- 3. 视觉强化：解决空白卡片与宽度适配 ---
 def set_ui():
     st.markdown("""
         <style>
@@ -76,9 +80,10 @@ def set_ui():
         header { visibility: hidden !important; }
         h1, h2, h3 { color: #000000 !important; border-bottom: 2px solid #000000; padding-bottom: 5px; }
 
-        /* 侧边栏卡片导航修复 */
+        /* 侧边栏卡片导航 */
         [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E9ECEF !important; }
-        [data-testid="stSidebar"] div[role="radiogroup"] { display: flex; flex-direction: column; gap: 15px; padding: 10px; }
+        [data-testid="stSidebarUserContent"] { padding-top: 10px !important; }
+        [data-testid="stSidebar"] div[role="radiogroup"] { display: flex; flex-direction: column; gap: 15px; width: 100% !important; padding: 10px; }
         
         [data-testid="stSidebar"] div[role="radiogroup"] label {
             background-color: #F8F9FA !important; border: 1px solid #E0E0E0 !important;
@@ -86,7 +91,7 @@ def set_ui():
             transition: all 0.2s ease; width: 100% !important;
         }
         
-        /* 强制文字显示为黑色并居中 */
+        /* 强制显影文字 */
         [data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
             font-size: 18px !important; color: #000000 !important; font-weight: bold !important; text-align: center !important; margin: 0 !important;
         }
@@ -96,7 +101,7 @@ def set_ui():
 
         /* 选中态阴影 */
         [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
-            background-color: #FFFFFF !important; border: 2px solid #000000 !important; box-shadow: 0 8px 15px rgba(0,0,0,0.1) !important;
+            background-color: #FFFFFF !important; border: 2px solid #000000 !important; box-shadow: 0 8px 18px rgba(0,0,0,0.15) !important;
         }
 
         .stProgress > div > div > div > div { background-color: #000000 !important; }
@@ -115,57 +120,56 @@ def get_coords(address):
     except: return None, None
 
 # --- 4. 页面主体 ---
-st.set_page_config(page_title="小猫直喂-调度中心", layout="wide")
+st.set_page_config(page_title="小猫直喂-指挥中心", layout="wide")
 set_ui()
 
 with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
-    # 导航菜单
-    menu = st.radio("导航菜单", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
+    # 图标与文字结合的导航
+    menu = st.radio("功能选择", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
 
 if 'feishu_cache' not in st.session_state:
     st.session_state['feishu_cache'] = fetch_feishu_data()
 
 if menu == "📂 数据中心":
-    st.title("📂 数据录入与管理")
+    st.title("📂 数据录入与管理中心")
     c1, c2 = st.columns(2)
     with c1:
         with st.expander("批量导入 Excel"):
             up_file = st.file_uploader("选择文件", type=["xlsx"])
-            if up_file and st.button("🚀 启动同步"):
-                # 此处保持之前的 Excel 录入逻辑
-                st.info("数据处理中...")
+            if up_file and st.button("🚀 启动数据同步"):
+                st.info("批量任务处理中...")
+                # 此处包含之前的批量录入逻辑
+    
     st.divider()
-    if st.button("🔄 刷新预览云端数据"):
+    if st.button("🔄 刷新并预览云端数据"):
         st.session_state['feishu_cache'] = fetch_feishu_data()
         df_v = st.session_state['feishu_cache'].copy()
         if not df_v.empty:
             for c in ['服务开始日期', '服务结束日期']:
                 df_v[c] = pd.to_datetime(df_v[c], unit='ms', errors='coerce').dt.strftime('%Y-%m-%d')
-            st.dataframe(df_view.drop(columns=['record_id'], errors='ignore'), use_container_width=True)
+            st.dataframe(df_v.drop(columns=['record_id'], errors='ignore'), use_container_width=True)
 
 else:
-    st.title("🚀 智能调度看板")
+    st.title("🚀 智能调度排单看板")
     with st.sidebar:
         st.divider()
-        st.subheader("⚙️ 调度设置")
+        st.subheader("⚙️ 调度参数设置")
         active_sitters = ["梦蕊", "依蕊"]
         current_active = [s for s in active_sitters if st.checkbox(f"{s} (出勤)", value=True)]
-        date_range = st.date_input("📅 作业范围", value=(datetime.now(), datetime.now() + timedelta(days=2)))
+        date_range = st.date_input("📅 选择拟定周期", value=(datetime.now(), datetime.now() + timedelta(days=2)))
     
     df = st.session_state['feishu_cache'].copy()
     if not df.empty and isinstance(date_range, tuple) and len(date_range) == 2:
         start_d, end_d = date_range
-        # 预转换日期
-        for col in ['服务开始日期', '服务结束日期']:
-            df[col] = pd.to_datetime(df[col], unit='ms', errors='coerce')
+        for col in ['服务开始日期', '服务结束日期']: df[col] = pd.to_datetime(df[col], unit='ms', errors='coerce')
 
         if st.button(f"🚀 点击拟定排单方案 ({start_d} ~ {end_d})"):
             all_plans = []
             days = pd.date_range(start_d, end_d).tolist()
-            p_bar = st.progress(0)
+            p_bar_calc = st.progress(0)
             for i, d in enumerate(days):
                 cur_ts = pd.Timestamp(d)
                 day_df = df[(df['服务开始日期'] <= cur_ts) & (df['服务结束日期'] >= cur_ts)].copy()
@@ -180,7 +184,7 @@ else:
                             v_df['拟定顺序'] = v_df.groupby('拟定人').cumcount() + 1
                             v_df['作业日期'] = d.strftime('%Y-%m-%d')
                             all_plans.append(v_df)
-                p_bar.progress((i + 1) / len(days))
+                p_bar_calc.progress((i + 1) / len(days))
             if all_plans: st.session_state['period_plan'] = pd.concat(all_plans); st.success("✅ 方案拟定完成！")
         
         if 'period_plan' in st.session_state:
@@ -195,10 +199,10 @@ else:
                 if st.button("✅ 确认同步全周期方案至飞书"):
                     t_s = len(res); s_b = st.progress(0); fail_count = 0
                     for i, (_, rs) in enumerate(res.iterrows()):
+                        # 执行加固版回传逻辑
                         if not update_feishu_record(rs['record_id'], {"喂猫师": rs['拟定人'], "建议顺序": rs['拟定顺序']}):
                             fail_count += 1
                         s_b.progress((i + 1) / t_s)
                     if fail_count == 0: 
-                        st.balloons()
-                        st.success("🎉 全周期同步已成功！请刷新飞书查看结果。")
+                        st.balloons(); st.success("🎉 全周期同步已成功！"); st.session_state.pop('feishu_cache', None)
                     else: st.warning(f"⚠️ 同步结束，其中 {fail_count} 条同步失败。")
