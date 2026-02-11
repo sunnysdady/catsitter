@@ -9,14 +9,14 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import time
 
-# --- 1. 核心配置 (Secrets) ---
+# --- 1. 核心连接配置 ---
 APP_ID = st.secrets.get("FEISHU_APP_ID", "")
 APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "")
 APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "") 
 TABLE_ID = st.secrets.get("FEISHU_TABLE_ID", "") 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "")
 
-# --- 2. 核心功能逻辑 ---
+# --- 2. 核心功能函数 ---
 def get_feishu_token():
     url = "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal"
     r = requests.post(url, json={"app_id": APP_ID, "app_secret": APP_SECRET})
@@ -31,6 +31,7 @@ def fetch_feishu_data():
         items = r.get("data", {}).get("items", [])
         if not items: return pd.DataFrame()
         df = pd.DataFrame([dict(i['fields'], record_id=i['record_id']) for i in items])
+        # 补齐必要列
         for col in ['宠物名字', '服务开始日期', '服务结束日期', '详细地址', '投喂频率', '备注', '建议顺序']:
             if col not in df.columns: df[col] = ""
         return df
@@ -60,55 +61,61 @@ def update_feishu_record(record_id, fields):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     requests.patch(url, headers=headers, json={"fields": fields})
 
-# --- 3. 视觉强化：高对比度导航 CSS ---
+# --- 3. 视觉强化：全宽卡片导航 CSS ---
 def set_ui():
     st.markdown("""
         <style>
-        /* 基础与标题设置 */
+        /* 基础设置 */
         html, body, [data-testid="stAppViewContainer"] { background-color: #FFFFFF !important; color: #000000 !important; font-family: 'Microsoft YaHei', Arial !important; }
         header { visibility: hidden !important; }
         h1, h2, h3 { color: #000000 !important; border-bottom: 2px solid #000000; padding-bottom: 5px; }
 
-        /* 侧边栏整体 */
+        /* 侧边栏宽度与内边距适配 */
         [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E9ECEF !important; }
+        [data-testid="stSidebarUserContent"] { padding-top: 20px !important; }
         
         /* 导航卡片列表 */
-        [data-testid="stSidebar"] div[role="radiogroup"] { display: flex; flex-direction: column; gap: 20px; padding: 10px; }
+        [data-testid="stSidebar"] div[role="radiogroup"] { display: flex; flex-direction: column; gap: 15px; width: 100% !important; }
         
-        /* 单个导航卡片的基础态 (修复色块问题) */
+        /* 单个导航卡片的基础态 */
         [data-testid="stSidebar"] div[role="radiogroup"] label {
-            background-color: #F8F9FA !important; /* 浅灰背景 */
-            border: 1px solid #DEE2E6 !important; /* 清晰边框 */
-            padding: 25px 15px !important;
-            border-radius: 12px !important;
+            background-color: #FBFBFB !important; 
+            border: 1px solid #E0E0E0 !important;
+            padding: 30px 10px !important; 
+            border-radius: 14px !important;
             cursor: pointer;
             transition: all 0.2s ease-in-out;
             width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
         }
         
-        /* 导航卡片内的文字显影与放大 */
+        /* 导航卡片内的文字显影 */
         [data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-            font-size: 24px !important;
-            color: #495057 !important;
+            font-size: 20px !important;
+            color: #333333 !important;
             font-weight: bold !important;
             text-align: center !important;
+            margin: 0 !important;
         }
 
         /* 隐藏原生单选圈 */
         [data-testid="stSidebar"] div[role="radiogroup"] [data-baseweb="radio"] div:first-child { display: none !important; }
 
-        /* 选中态：高对比度阴影与加粗边框 */
+        /* 选中态：高对比度黑边框与阴影 */
         [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
             background-color: #FFFFFF !important;
-            border: 3px solid #000000 !important;
-            box-shadow: 0 12px 24px rgba(0,0,0,0.2) !important;
-            transform: scale(1.02);
+            border: 2px solid #000000 !important;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.18) !important;
         }
         [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) p {
             color: #000000 !important;
         }
 
-        /* 通用按钮 */
+        /* 进度条样式 */
+        .stProgress > div > div > div > div { background-color: #000000 !important; }
+        
+        /* 按钮与输入框 */
         div.stButton > button { background-color: #FFFFFF !important; color: #000000 !important; border: 1px solid #000000 !important; border-radius: 8px !important; font-weight: bold !important; }
         div.stButton > button:hover { background-color: #000000 !important; color: #FFFFFF !important; }
         </style>
@@ -133,24 +140,25 @@ with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
-    # 图标放大后的导航
-    menu = st.radio("导航菜单", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
+    # 修复后的导航菜单，包含文字描述
+    menu = st.radio("导航选择", ["📂 数据中心", "🚀 智能看板"], label_visibility="collapsed")
 
+# 缓存初始化
 if 'feishu_cache' not in st.session_state:
     st.session_state['feishu_cache'] = fetch_feishu_data()
 
 if menu == "📂 数据中心":
-    st.title("📂 数据录入中心")
+    st.title("📂 数据录入与管理")
     c1, c2 = st.columns(2)
     with c1:
-        with st.expander("➕ 批量导入 Excel"):
-            up_file = st.file_uploader("选择 Excel", type=["xlsx"])
-            if up_file and st.button("🚀 启动查重同步"):
+        with st.expander("批量导入 Excel"):
+            up_file = st.file_uploader("选择文件", type=["xlsx"])
+            if up_file and st.button("确认查重同步"):
                 df_up = pd.read_excel(up_file)
                 total, success, skipped = len(df_up), 0, 0
                 p_bar = st.progress(0); p_text = st.empty()
                 for i, (_, row) in enumerate(df_up.iterrows()):
-                    p_text.text(f"同步进度: {i+1}/{total}")
+                    p_text.text(f"处理中: {i+1}/{total}")
                     s_ts = int(datetime.combine(pd.to_datetime(row['服务开始日期']), datetime.min.time()).timestamp()*1000)
                     e_ts = int(datetime.combine(pd.to_datetime(row['服务结束日期']), datetime.min.time()).timestamp()*1000)
                     payload = {"详细地址": str(row['详细地址']).strip(), "宠物名字": str(row.get('宠物名字', '小猫')).strip(), "投喂频率": int(row.get('投喂频率', 1)), "服务开始日期": s_ts, "服务结束日期": e_ts, "备注": str(row.get('备注', ''))}
@@ -159,10 +167,10 @@ if menu == "📂 数据中心":
                     elif res == "duplicate": skipped += 1
                     p_bar.progress((i + 1) / total)
                 p_text.empty(); p_bar.empty()
-                st.success(f"✅ 完成！成功录入 {success} 条，跳过重复 {skipped} 条。")
+                st.success(f"完成！录入 {success} 条，跳过重复 {skipped} 条。")
                 st.session_state['feishu_cache'] = fetch_feishu_data()
     with c2:
-        with st.expander("➕ 单条补单"):
+        with st.expander("单条快速补单"):
             with st.form("manual", clear_on_submit=True):
                 addr = st.text_input("详细地址*")
                 cat = st.text_input("宠物名", value="小胖猫")
@@ -172,16 +180,16 @@ if menu == "📂 数据中心":
                 if st.form_submit_button("保存到云端"):
                     payload = {"详细地址": addr.strip(), "宠物名字": cat.strip(), "投喂频率": freq, "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)}
                     res = add_feishu_record(payload)
-                    if res == "success": st.balloons(); st.success("✅ 录入成功！")
-                    elif res == "duplicate": st.error("❌ 该订单已存在。")
+                    if res == "success": st.balloons(); st.success("录入成功！")
+                    elif res == "duplicate": st.error("查重：该记录已存在。")
                     st.session_state['feishu_cache'] = fetch_feishu_data()
     st.divider()
-    if st.button("🔄 刷新预览"):
+    if st.button("🔄 刷新预览云端数据"):
         st.session_state['feishu_cache'] = fetch_feishu_data()
-        df_view = st.session_state['feishu_cache'].copy()
-        if not df_view.empty:
-            for c in ['服务开始日期', '服务结束日期']: df_view[c] = pd.to_datetime(df_view[c], unit='ms').dt.strftime('%Y-%m-%d')
-            st.dataframe(df_view.drop(columns=['record_id'], errors='ignore'), use_container_width=True)
+        df_v = st.session_state['feishu_cache'].copy()
+        if not df_v.empty:
+            for c in ['服务开始日期', '服务结束日期']: df_v[c] = pd.to_datetime(df_v[c], unit='ms').dt.strftime('%Y-%m-%d')
+            st.dataframe(df_v.drop(columns=['record_id'], errors='ignore'), use_container_width=True)
 
 else:
     st.title("🚀 智能调度看板")
@@ -196,10 +204,10 @@ else:
     if not df.empty and isinstance(date_range, tuple) and len(date_range) == 2:
         for col in ['服务开始日期', '服务结束日期']: df[col] = pd.to_datetime(df[col], unit='ms')
         start_d, end_d = date_range
-        if st.button(f"🚀 点击执行方案拟定 ({start_d} ~ {end_d})"):
+        if st.button(f"🚀 点击拟定周期方案 ({start_d} ~ {end_d})"):
             all_plans = []
             days = pd.date_range(start_d, end_d).tolist()
-            with st.spinner("计算中..."):
+            with st.spinner("计算路径与均衡负载..."):
                 for d in days:
                     cur_ts = pd.Timestamp(d)
                     day_df = df[(df['服务开始日期'] <= cur_ts) & (df['服务结束日期'] >= cur_ts)].copy()
@@ -212,7 +220,7 @@ else:
                             if not v_df.empty:
                                 v_df['拟定人'] = current_active[0]; v_df['拟定顺序'] = v_df.groupby('拟定人').cumcount() + 1; v_df['作业日期'] = d.strftime('%Y-%m-%d')
                                 all_plans.append(v_df)
-            if all_plans: st.session_state['period_plan'] = pd.concat(all_plans); st.success("✅ 方案拟定完成！")
+            if all_plans: st.session_state['period_plan'] = pd.concat(all_plans); st.success("方案拟定完成！")
         
         if 'period_plan' in st.session_state:
             res = st.session_state['period_plan']
@@ -222,10 +230,10 @@ else:
             if not v_data.empty:
                 st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=11), layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color=[0, 123, 255, 160], get_radius=300)]))
                 st.data_editor(v_data[['拟定顺序', '宠物名字', '详细地址', '备注']], use_container_width=True)
-                if st.button("✅ 确认并同步全周期方案"):
-                    t_sync = len(res); s_bar = st.progress(0); s_text = st.empty()
+                if st.button("✅ 确认同步全周期方案至飞书"):
+                    t_s = len(res); s_b = st.progress(0); s_t = st.empty()
                     for i, (_, rs) in enumerate(res.iterrows()):
-                        s_text.text(f"回写云端: {i+1}/{t_sync}")
+                        s_t.text(f"回写中: {i+1}/{t_s}")
                         update_feishu_record(rs['record_id'], {"喂猫师": rs['拟定人'], "建议顺序": rs['拟定顺序']})
-                        s_bar.progress((i + 1) / t_sync)
-                    s_text.empty(); s_bar.empty(); st.success("🎉 同步成功！")
+                        s_b.progress((i + 1) / t_s)
+                    s_t.empty(); s_b.empty(); st.success("🎉 全周期同步完成！")
