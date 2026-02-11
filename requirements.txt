@@ -5,3 +5,4 @@ scikit-learn
 xlsxwriter
 pydeck
 openpyxl
+fpdf2
