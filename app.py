@@ -10,164 +10,179 @@ from concurrent.futures import ThreadPoolExecutor
 import re
 import numpy as np
 
-# --- 1. 核心配置 ---
+# --- 1. 核心连接配置 (请在 Streamlit Secrets 中填写) ---
+APP_ID = st.secrets.get("FEISHU_APP_ID", "")
+APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "")
+APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "") 
+TABLE_ID = st.secrets.get("FEISHU_TABLE_ID", "") 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "c26fc76dd582c32e4406552df8ba40ff")
 
-# --- 2. 视觉优化：深灰黑专业 UI ---
-def set_professional_ui():
-    st.markdown(f"""
+# --- 2. 飞书 API 核心交互 ---
+def get_feishu_token():
+    url = "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal"
+    r = requests.post(url, json={"app_id": APP_ID, "app_secret": APP_SECRET})
+    return r.json().get("app_access_token")
+
+def fetch_feishu_data():
+    token = get_feishu_token()
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(url, headers=headers, params={"page_size": 500}).json()
+        items = r.get("data", {}).get("items", [])
+        return pd.DataFrame([i['fields'] for i in items]) if items else pd.DataFrame()
+    except: return pd.DataFrame()
+
+def add_feishu_record(fields):
+    token = get_feishu_token()
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records"
+    headers = {"Authorization": f"Bearer {token}"}
+    requests.post(url, headers=headers, json={"fields": fields})
+
+# --- 3. 视觉优化：深灰黑专业调度 UI ---
+def set_pro_ui():
+    st.markdown("""
          <style>
-         .stApp {{ background-color: #121212 !important; color: #E0E0E0 !important; }}
-         [data-testid="stSidebar"] {{ background-color: #1E1E1E !important; border-right: 1px solid #333; }}
-         [data-testid="stSidebar"] .stMarkdown p, 
-         [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
-         [data-testid="stSidebar"] .stCheckbox label p {{
-             color: #FFFFFF !important; font-weight: 600 !important;
-         }}
-         .block-container {{ background-color: rgba(30, 30, 30, 0.9); padding: 2rem; border-radius: 12px; }}
-         h1, h2, h3 {{ color: #FF9F43 !important; }}
+         .stApp { background-color: #121212 !important; color: #E0E0E0 !important; }
+         [data-testid="stSidebar"] { background-color: #1E1E1E !important; border-right: 1px solid #333; }
+         [data-testid="stSidebar"] .stMarkdown p { color: #FFFFFF !important; font-weight: 700 !important; }
+         .block-container { background-color: rgba(30, 30, 30, 0.95); border-radius: 12px; padding: 2rem; }
+         h1, h2, h3 { color: #FF9F43 !important; }
          </style>
          """, unsafe_allow_html=True)
 
-def extract_room(addr):
-    if pd.isna(addr): return ""
-    match = re.search(r'([a-zA-Z0-9-]{2,})$', str(addr).strip())
-    return match.group(1) if match else ""
-
 @st.cache_data(show_spinner=False)
-def get_coords_cached(address, city, api_key):
-    full_address = f"{city}{address}" if city not in str(address) else address
-    url = f"https://restapi.amap.com/v3/geocode/geo?key={api_key}&address={full_address}"
+def get_coords(address):
+    url = f"https://restapi.amap.com/v3/geocode/geo?key={AMAP_API_KEY}&address=深圳市{address}"
     try:
-        response = requests.get(url, timeout=5).json()
-        if response['status'] == '1' and response['geocodes']:
-            location = response['geocodes'][0]['location']
-            lng, lat = location.split(',')
-            return float(lng), float(lat), "成功"
-    except: return None, None, "异常"
-    return None, None, "未匹配"
+        r = requests.get(url, timeout=5).json()
+        if r['status'] == '1' and r['geocodes']:
+            lng, lat = r['geocodes'][0]['location'].split(',')
+            return float(lng), float(lat)
+    except: pass
+    return None, None
 
-# --- 3. 初始化 ---
-st.set_page_config(page_title="小猫直喂-智能派单", layout="wide", page_icon="🐱")
-set_professional_ui()
+# --- 4. 页面初始化 ---
+st.set_page_config(page_title="小猫直喂-飞书同步系统", layout="wide", page_icon="🐱")
+set_pro_ui()
 
 with st.sidebar:
     st.header("🔑 团队授权")
-    access_code = st.text_input("暗号", type="password")
-    if access_code != "xiaomaozhiwei666": 
-        st.info("💡 暗号：xiaomaozhiwei666")
-        st.stop()
+    if st.text_input("暗号", type="password") != "xiaomaozhiwei666": st.stop()
     
     st.divider()
-    st.header("👤 伙伴出勤")
     active_sitters = []
     if st.checkbox("梦蕊 (出勤)", value=True): active_sitters.append("梦蕊")
     if st.checkbox("依蕊 (出勤)", value=True): active_sitters.append("依蕊")
     
     st.divider()
-    date_range = st.date_input("派单日期区间", value=(datetime.now(), datetime.now() + timedelta(days=6)))
-    uploaded_file = st.file_uploader("上传《客户主表》Excel", type=["xlsx"])
+    date_range = st.date_input("查看区间", value=(datetime.now(), datetime.now() + timedelta(days=6)))
 
-# --- 4. 派单逻辑核心 ---
-if uploaded_file and len(active_sitters) > 0:
-    raw_df = pd.read_excel(uploaded_file)
-    raw_df.columns = raw_df.columns.str.strip()
-    
-    # 智能适配列名：支持“喂猫师”或原来的“指定喂猫师”
-    if '喂猫师' not in raw_df.columns and '指定喂猫师' in raw_df.columns:
-        raw_df.rename(columns={'指定喂猫师': '喂猫师'}, inplace=True)
-    
-    # 自动补齐逻辑
-    if '房号' not in raw_df.columns: raw_df['房号'] = raw_df['详细地址'].apply(extract_room)
-    if '宠物名字' not in raw_df.columns: raw_df['宠物名字'] = "小胖猫"
-    if '喂猫师' not in raw_df.columns: raw_df['喂猫师'] = np.nan
-    if '投喂频率' not in raw_df.columns: raw_df['投喂频率'] = 1
+st.title("🐱 小猫直喂-飞书智能大脑")
+tab1, tab2 = st.tabs(["📂 飞书同步中心", "🚀 智能排单看板"])
 
-    if st.button("🚀 生成小猫直喂派单方案"):
-        start_date, end_date = date_range
-        date_list = pd.date_range(start=start_date, end=end_date).tolist()
-        all_results = []
-        
-        for current_date in date_list:
-            current_ts = pd.Timestamp(current_date)
-            # 频率过滤
-            day_df = raw_df[raw_df.apply(lambda r: (r['服务开始日期'] <= current_ts <= r['服务结束日期']) and ((current_ts - r['服务开始日期']).days % (r['投喂频率'] if r['投喂频率']>0 else 1) == 0), axis=1)].copy()
+with tab1:
+    st.subheader("📊 飞书云端记录")
+    if st.button("🔄 同步飞书最新订单数据"):
+        st.session_state['feishu_data'] = fetch_feishu_data()
+        if not st.session_state['feishu_data'].empty:
+            st.success(f"同步成功！共获取 {len(st.session_state['feishu_data'])} 条记录。")
+            st.dataframe(st.session_state['feishu_data'], use_container_width=True)
+
+    with st.expander("➕ 单条手动补单"):
+        with st.form("add_one"):
+            c1, c2 = st.columns(2)
+            addr = c1.text_input("详细地址*")
+            cat = c2.text_input("宠物名字", value="小猫咪")
+            sitter = st.selectbox("指定喂猫师 (选填)", ["系统分配", "梦蕊", "依蕊"])
+            f1, f2 = st.columns(2)
+            sd, ed = f1.date_input("开始日期"), f2.date_input("结束日期")
+            freq = st.number_input("投喂频率", min_value=1, value=1)
+            if st.form_submit_button("立即同步至飞书"):
+                new_fields = {
+                    "详细地址": addr, "宠物名字": cat, "投喂频率": freq,
+                    "喂猫师": sitter if sitter != "系统分配" else None,
+                    "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000),
+                    "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)
+                }
+                add_feishu_record(new_fields)
+                st.info("数据已发送至飞书，请刷新同步。")
+
+with tab2:
+    if 'feishu_data' not in st.session_state or st.session_state['feishu_data'].empty:
+        st.warning("请先在 Tab 1 完成同步")
+    else:
+        if st.button("🚀 执行双优先级均衡排单"):
+            df = st.session_state['feishu_data']
+            # 日期标准化处理
+            for col in ['服务开始日期', '服务结束日期']:
+                df[col] = pd.to_datetime(df[col], unit='ms') if df[col].dtype == 'int64' else pd.to_datetime(df[col])
             
-            if not day_df.empty:
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    coords = list(executor.map(lambda a: get_coords_cached(a, "深圳市", AMAP_API_KEY), day_df['详细地址'].tolist()))
-                day_df[['lng', 'lat', 'status']] = pd.DataFrame(coords, index=day_df.index)
-                valid_df = day_df.dropna(subset=['lng', 'lat']).copy()
+            start_d, end_d = date_range
+            dates = pd.date_range(start_d, end_d).tolist()
+            final_dispatch = []
+            
+            for d in dates:
+                cur_ts = pd.Timestamp(d)
+                today_df = df[(df['服务开始日期'] <= cur_ts) & (df['服务结束日期'] >= cur_ts)].copy()
+                # 频率过滤逻辑
+                today_df = today_df[today_df.apply(lambda r: (cur_ts - r['服务开始日期']).days % r.get('投喂频率', 1) == 0, axis=1)]
                 
-                if not valid_df.empty:
-                    # 分配结果初始化
-                    valid_df['最终喂猫师'] = valid_df['喂猫师']
+                if not today_df.empty:
+                    with ThreadPoolExecutor(max_workers=10) as ex:
+                        coords = list(ex.map(get_coords, today_df['详细地址']))
+                    today_df[['lng', 'lat']] = pd.DataFrame(coords, index=today_df.index)
+                    today_df = today_df.dropna(subset=['lng', 'lat'])
                     
-                    # 识别哪些单子需要系统分配（没选喂猫师，或者选的人今天没出勤）
-                    free_mask = valid_df['最终喂猫师'].isna() | (~valid_df['最终喂猫师'].isin(active_sitters))
-                    
-                    if free_mask.any():
-                        free_df = valid_df[free_mask].copy()
-                        s_count = len(active_sitters)
-                        # 系统自动分配算法
-                        if len(free_df) < s_count:
-                            valid_df.loc[free_mask, '最终喂猫师'] = active_sitters[0]
-                        else:
-                            kmeans = KMeans(n_clusters=s_count, random_state=42, n_init='auto')
-                            free_df['组'] = kmeans.fit_predict(free_df[['lng', 'lat']])
-                            # 负载均衡：结合指定单量，控制差距在 2 单以内
-                            while s_count > 1:
-                                totals = [len(valid_df[valid_df['最终喂猫师'] == s]) + len(free_df[free_df['组'] == active_sitters.index(s)]) for s in active_sitters]
-                                if abs(totals[0] - totals[1]) <= 2: break
-                                src, dst = (0, 1) if totals[0] > totals[1] else (1, 0)
-                                targets = free_df[free_df['组'] == src].index
-                                dists = ((free_df.loc[targets, 'lng'] - kmeans.cluster_centers_[dst][0])**2 + (free_df.loc[targets, 'lat'] - kmeans.cluster_centers_[dst][1])**2)
-                                free_df.loc[dists.idxmin(), '组'] = dst
-                            valid_df.loc[free_mask, '最终喂猫师'] = free_df['组'].map(lambda x: active_sitters[x])
+                    if not today_df.empty:
+                        # P1: 优先固定绑定
+                        today_df['最终人'] = today_df.get('喂猫师', np.nan)
+                        free_m = today_df['最终人'].isna() | (~today_df['最终人'].isin(active_sitters))
+                        
+                        # P2: 距离均衡
+                        if free_m.any():
+                            free_df = today_df[free_m].copy()
+                            sc = len(active_sitters)
+                            if len(free_df) >= sc:
+                                km = KMeans(n_clusters=sc, random_state=42, n_init='auto')
+                                free_df['组'] = km.fit_predict(free_df[['lng', 'lat']])
+                                # 强制均衡：单量差 ≤ 2
+                                while sc > 1:
+                                    tots = [len(today_df[today_df['最终人'] == s]) + len(free_df[free_df['组'] == active_sitters.index(s)]) for s in active_sitters]
+                                    if abs(tots[0] - tots[1]) <= 2: break
+                                    src, dst = (0, 1) if tots[0] > tots[1] else (1, 0)
+                                    target_idx = free_df[free_df['组'] == src].index
+                                    dist = ((free_df.loc[target_idx, 'lng'] - km.cluster_centers_[dst][0])**2 + (free_df.loc[target_idx, 'lat'] - km.cluster_centers_[dst][1])**2)
+                                    free_df.loc[dist.idxmin(), '组'] = dst
+                                today_df.loc[free_m, '最终人'] = free_df['组'].map(lambda x: active_sitters[x])
+                        
+                        today_df['最终人'] = today_df['最终人'].fillna(active_sitters[0])
+                        today_df['派单日期'] = d.strftime('%Y-%m-%d')
+                        final_dispatch.append(today_df)
+            
+            if final_dispatch:
+                st.session_state['dispatch'] = pd.concat(final_dispatch)
+                st.success("智能均衡排单已完成！")
 
-                    valid_df['最终喂猫师'] = valid_df['最终喂猫师'].fillna(active_sitters[0])
-                    valid_df = valid_df.sort_values(by=['最终喂猫师', 'lat'], ascending=False)
-                    valid_df['顺序'] = valid_df.groupby('最终喂猫师').cumcount() + 1
-                    valid_df['派单日期'] = current_date.strftime('%Y-%m-%d')
-                    all_results.append(valid_df)
-        
-        if all_results:
-            st.session_state['cloud_data'] = pd.concat(all_results)
-            st.success("✅ 方案生成成功：已优先处理指定单，其余单量已均衡")
-
-# --- 5. 展示与下载 ---
-if 'cloud_data' in st.session_state:
-    df = st.session_state['cloud_data']
-    st.divider()
-    
-    # 导出报表
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='总表')
-        for s in active_sitters:
-            df[df['最终喂猫师'] == s].to_excel(writer, index=False, sheet_name=s)
-    st.download_button(label="📥 下载 Excel 专属排期表", data=output.getvalue(), file_name=f"小猫直喂_排期_{datetime.now().strftime('%m%d')}.xlsx")
-    
-    st.divider()
-    c1, c2 = st.columns(2)
-    with c1: cur_date = st.selectbox("📅 日期选择", sorted(df['派单日期'].unique()))
-    with c2: cur_sitter = st.selectbox("👤 伙伴视角", sorted(df['最终喂猫师'].unique()))
-    
-    worker_data = df[(df['派单日期'] == cur_date) & (df['最终喂猫师'] == cur_sitter)].copy()
-    if not worker_data.empty:
-        # 地图显示
-        st.pydeck_chart(pdk.Deck(
-            map_style=pdk.map_styles.DARK,
-            initial_view_state=pdk.ViewState(longitude=worker_data['lng'].mean(), latitude=worker_data['lat'].mean(), zoom=12),
-            layers=[
-                pdk.Layer("PathLayer", [{"path": worker_data[['lng', 'lat']].values.tolist()}], get_path="path", get_width=18, get_color=[255, 159, 67, 200]),
-                pdk.Layer("ScatterplotLayer", worker_data, get_position='[lng, lat]', get_color=[255, 70, 0], get_radius=250)
-            ],
-            tooltip={"text": "{顺序}. {宠物名字}\n地址: {详细地址}"}
-        ))
-
-        st.subheader(f"📋 {cur_sitter} 的待办清单")
-        worker_data['完成'] = False 
-        target_cols = ['完成', '顺序', '宠物名字', '房号', '详细地址', '喂养备注']
-        existing = [c for c in target_cols if c in worker_data.columns or c == '完成']
-        st.data_editor(worker_data[existing], column_config={"完成": st.column_config.CheckboxColumn("核销")}, hide_index=True, use_container_width=True)
+        if 'dispatch' in st.session_state:
+            res = st.session_state['dispatch']
+            c1, c2 = st.columns(2)
+            sd = c1.selectbox("📅 日期", sorted(res['派单日期'].unique()))
+            ss = c2.selectbox("👤 伙伴视角", sorted(res['最终人'].unique()))
+            v_data = res[(res['派单日期'] == sd) & (res['最终人'] == ss)]
+            
+            # 地图渲染
+            st.pydeck_chart(pdk.Deck(
+                map_style=pdk.map_styles.DARK,
+                initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=12),
+                layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color=[255, 159, 67], get_radius=250)]
+            ))
+            st.data_editor(v_data[['宠物名字', '详细地址', '备注']], use_container_width=True)
+            
+            # 下载功能：直接把这一周的分 Sheet 报表导出来发给依蕊
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                res.to_excel(writer, index=False, sheet_name='汇总')
+                for s in res['最终人'].unique():
+                    res[res['最终人'] == s].to_excel(writer, index=False, sheet_name=s)
+            st.download_button("📥 下载下周专属 Excel 周报表", data=output.getvalue(), file_name=f"小猫直喂_周计划_{datetime.now().strftime('%m%d')}.xlsx")
