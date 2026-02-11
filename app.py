@@ -9,7 +9,7 @@ import re
 import io
 import calendar
 
-# --- 1. 核心配置与参数清洗 ---
+# --- 1. 核心配置与 ID 清洗 ---
 def clean_id(raw_id):
     if not raw_id: return ""
     match = re.search(r'(bas|tbl|rec)[a-zA-Z0-9]+', str(raw_id))
@@ -46,7 +46,7 @@ def optimize_route(df_sitter):
     return res_df
 
 def execute_smart_dispatch(df, active_sitters):
-    """一只猫固定一人逻辑"""
+    """一只猫固定一人核心算法"""
     if '喂猫师' not in df.columns: df['喂猫师'] = ""
     df['喂猫师'] = df['喂猫师'].fillna("")
     cat_to_sitter_map = {}
@@ -69,7 +69,7 @@ def execute_smart_dispatch(df, active_sitters):
             sitter_load[best] += 1
     return df
 
-# --- 3. 飞书 API 读取层 ---
+# --- 3. 飞书 API 读取 ---
 
 def get_feishu_token():
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -96,7 +96,30 @@ def fetch_feishu_data():
         return df
     except: return pd.DataFrame()
 
-# --- 4. 视觉与导出工具 (200*50 精准适配) ---
+# --- 4. 视觉方案 (精准 200*50 与 100*25 适配) ---
+
+def set_ui():
+    st.markdown("""
+        <style>
+        /* A. 主导航按钮 (200*50) */
+        .main-nav [data-testid="stVerticalBlock"] div.stButton > button {
+            width: 200px !important; height: 50px !important;
+            border: 3px solid #000 !important; border-radius: 10px !important;
+            font-size: 20px !important; font-weight: 800 !important;
+            box-shadow: 4px 4px 0px #000; background-color: #FFFFFF !important;
+            margin-bottom: 12px !important; display: block; margin-left: auto; margin-right: auto;
+        }
+        /* B. 快捷调度小按钮 (100*25) */
+        .quick-nav div.stButton > button {
+            width: 100px !important; height: 25px !important;
+            font-size: 13px !important; padding: 0px !important;
+            border: 2px solid #000 !important; border-radius: 5px !important;
+            box-shadow: 2px 2px 0px #000; margin: 2px !important;
+        }
+        .stDataFrame { font-size: 16px !important; }
+        .info-card { background: #f8f9fa; border-left: 5px solid #000; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+        </style>
+        """, unsafe_allow_html=True)
 
 def generate_excel_multisheet(df):
     output = io.BytesIO()
@@ -111,24 +134,6 @@ def generate_excel_multisheet(df):
                 s_df.to_excel(writer, index=False, sheet_name=s_name[:31])
     return output.getvalue()
 
-def set_ui():
-    st.markdown("""
-        <style>
-        /* 侧边栏主功能模块：锁定 200*50 比例 */
-        [data-testid="stSidebar"] div.stButton > button {
-            width: 200px !important; height: 50px !important;
-            border: 3px solid #000 !important; border-radius: 10px !important;
-            font-size: 20px !important; font-weight: 800 !important;
-            box-shadow: 4px 4px 0px #000; background-color: #FFFFFF !important;
-            margin-bottom: 10px !important; display: block; margin-left: auto; margin-right: auto;
-        }
-        /* 快捷调度小按钮 */
-        .q-btn button { height: 40px !important; font-size: 14px !important; border-radius: 5px !important; }
-        .stDataFrame { font-size: 16px !important; }
-        .info-card { background: #f8f9fa; border-left: 5px solid #000; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
-        </style>
-        """, unsafe_allow_html=True)
-
 @st.cache_data(show_spinner=False)
 def get_coords(address):
     url = f"https://restapi.amap.com/v3/geocode/geo?key={AMAP_API_KEY}&address=深圳市{address}"
@@ -140,43 +145,45 @@ def get_coords(address):
     except: pass
     return None, None
 
-# --- 5. 页面控制 ---
+# --- 5. 流程中心 ---
 
-st.set_page_config(page_title="指挥中心 V39.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V40.0", layout="wide")
 set_ui()
 
 if 'page' not in st.session_state: st.session_state['page'] = "智能看板"
 if 'feishu_cache' not in st.session_state: st.session_state['feishu_cache'] = fetch_feishu_data()
 
+# 侧边栏整体容器
 with st.sidebar:
     st.header("🔑 团队授权")
     if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
     st.divider()
-    # 4 个主功能模块 (200*50)
+    
+    # 频道 A: 主导航 (200*50)
+    st.markdown('<div class="main-nav">', unsafe_allow_html=True)
     if st.button("📂 数据中心"): st.session_state['page'] = "数据中心"
     if st.button("📝 订单信息"): st.session_state['page'] = "订单信息"
     if st.button("🚀 智能看板"): st.session_state['page'] = "智能看板"
     if st.button("📖 帮助文档"): st.session_state['page'] = "帮助文档"
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 6. 逻辑模块渲染 ---
+# --- 6. 逻辑频道渲染 ---
 
-# A. 帮助文档
 if st.session_state['page'] == "帮助文档":
     st.title("📖 帮助文档回归")
     st.markdown("""
     ### 📌 系统操作核心指引
-    1. **数据入口**：在“数据中心”上传 Excel 或单条录入，数据即时进入飞书云端。
-    2. **订单自检**：在“订单信息”中搜索猫咪，可查看其锁定的喂猫师与备注。
-    3. **智能调度**：在“智能看板”拟定方案，方案**仅在页面展示**，不改变飞书原始数据，下发任务请点击“导出 Excel”。
-    4. **一猫一人**：系统会自动继承历史派单关系，无需重复指定。
+    1. **数据入口**：在“数据中心”上传 Excel 或单条录入，数据即时同步至飞书。
+    2. **订单自检**：在“订单信息”中搜索宠物，可实时查看对应的喂猫师及片区热力分布。
+    3. **智能调度**：在“智能看板”使用快捷键锁定范围，方案仅在页面展示，绝对不写回云端。
+    4. **任务下发**：请使用看板下方的“导出 Excel”或“微信简报”下发指令给深圳团队。
     """)
 
-# B. 订单信息
 elif st.session_state['page'] == "订单信息":
-    st.title("📝 订单全景 (支持搜索)")
+    st.title("📝 订单全景与归属检索")
     df_info = st.session_state['feishu_cache'].copy()
     if not df_info.empty:
-        search_cat = st.text_input("🔍 搜索宠物名", placeholder="输入名字...")
+        search_cat = st.text_input("🔍 宠物搜索 (锁定归属师)", placeholder="输入名字...")
         if search_cat: df_info = df_info[df_info['宠物名字'].str.contains(search_cat, na=False)]
         with ThreadPoolExecutor(max_workers=15) as ex: coords = list(ex.map(get_coords, df_info['详细地址']))
         df_info[['lng', 'lat']] = pd.DataFrame(coords, index=df_info.index)
@@ -186,29 +193,28 @@ elif st.session_state['page'] == "订单信息":
                 layers=[pdk.Layer("HeatmapLayer", df_map, get_position='[lng, lat]', radius_pixels=60, intensity=1)]))
         st.dataframe(df_info[['宠物名字', '详细地址', '喂猫师', '备注']], use_container_width=True)
 
-# C. 数据中心
 elif st.session_state['page'] == "数据中心":
-    st.title("📂 数据中心 (云端映射)")
+    st.title("📂 数据中心 (云端快照管理)")
     c1, c2 = st.columns(2)
     with c1:
-        with st.expander("批量导入 Excel"):
+        with st.expander("批量导入 Excel (同步云端)"):
             up_file = st.file_uploader("文件", type=["xlsx"])
-            if up_file and st.button("🚀 录入云端"):
+            if up_file and st.button("🚀 启动录入"):
                 df_up = pd.read_excel(up_file); p_bar = st.progress(0); tok = get_feishu_token()
                 for i, (_, row) in enumerate(df_up.iterrows()):
                     f = {"详细地址": str(row['详细地址']).strip(), "宠物名字": str(row.get('宠物名字', '小猫')).strip(), "投喂频率": int(row.get('投喂频率', 1)), "服务开始日期": int(datetime.combine(pd.to_datetime(row['服务开始日期']), datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(pd.to_datetime(row['服务结束日期']), datetime.min.time()).timestamp()*1000)}
                     requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {tok}"}, json={"fields": f})
                     p_bar.progress((i + 1) / len(df_up))
-                st.success("批量成功！"); st.session_state.pop('feishu_cache', None); st.rerun()
+                st.success("批量同步成功！"); st.session_state.pop('feishu_cache', None); st.rerun()
     with c2:
-        with st.expander("✍️ 单条手动录入"):
-            with st.form("manual_cat"):
-                a = st.text_input("地址*"); n = st.text_input("名"); sd = st.date_input("开始"); ed = st.date_input("结束")
+        with st.expander("✍️ 单条手动录入 (同步云端)"):
+            with st.form("manual_entry"):
+                a = st.text_input("地址*"); n = st.text_input("宠物名"); sd = st.date_input("开始"); ed = st.date_input("结束")
                 if st.form_submit_button("💾 保存"):
                     f = {"详细地址": a.strip(), "宠物名字": n.strip(), "投喂频率": 1, "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000)}
                     requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {get_feishu_token()}"}, json={"fields": f})
-                    st.success("录入完成！"); st.session_state.pop('feishu_cache', None); st.rerun()
-    st.divider(); st.button("🔄 刷新快照预览", on_click=lambda: st.session_state.pop('feishu_cache', None))
+                    st.success("单条录入完成！"); st.session_state.pop('feishu_cache', None); st.rerun()
+    st.divider(); st.button("🔄 刷新预览", on_click=lambda: st.session_state.pop('feishu_cache', None))
     df_p = st.session_state['feishu_cache'].copy()
     if not df_p.empty:
         disp = df_p.drop(columns=['lng', 'lat', '_system_id'], errors='ignore')
@@ -216,33 +222,29 @@ elif st.session_state['page'] == "数据中心":
             if c in disp.columns: disp[c] = pd.to_datetime(disp[c]).dt.strftime('%Y-%m-%d')
         st.dataframe(disp, use_container_width=True)
 
-# D. 智能看板
 elif st.session_state['page'] == "智能看板":
-    st.title("🚀 调度指挥中心")
+    st.title("🚀 智能调度指挥中心")
     df_kb = st.session_state['feishu_cache'].copy()
     
     with st.sidebar:
-        st.divider(); st.subheader("📅 快速选择范围")
-        today = datetime.now().date()
-        col_q1, col_q2 = st.columns(2)
-        with col_q1:
-            if st.markdown('<div class="q-btn">', unsafe_allow_html=True) or st.button("📍 今天"):
-                st.session_state['range'] = (today, today + timedelta(days=1))
-            if st.button("📍 本周"):
-                st.session_state['range'] = (today - timedelta(days=today.weekday()), today + timedelta(days=(6 - today.weekday()) + 1))
-        with col_q2:
-            if st.button("📍 明天"):
-                st.session_state['range'] = (today + timedelta(days=1), today + timedelta(days=2))
-            if st.button("📍 本月"):
-                st.session_state['range'] = (today.replace(day=1), today.replace(day=calendar.monthrange(today.year, today.month)[1]) + timedelta(days=1))
+        st.divider(); st.subheader("📅 快速调度范围 (100*25)")
+        st.markdown('<div class="quick-nav">', unsafe_allow_html=True)
+        td = datetime.now().date()
+        cq1, cq2 = st.columns(2)
+        with cq1:
+            if st.button("📍 今天"): st.session_state['r'] = (td, td + timedelta(days=1))
+            if st.button("📍 本周"): st.session_state['r'] = (td - timedelta(days=td.weekday()), td + timedelta(days=(6-td.weekday())+1))
+        with cq2:
+            if st.button("📍 明天"): st.session_state['r'] = (td + timedelta(days=1), td + timedelta(days=2))
+            if st.button("📍 本月"): st.session_state['r'] = (td.replace(day=1), td.replace(day=calendar.monthrange(td.year, td.month)[1]) + timedelta(days=1))
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        # 核心：支持日期区间选择
-        date_sel = st.date_input("调度范围 (点选开始与结束日期)", value=st.session_state.get('range', (today, today + timedelta(days=1))))
+        date_sel = st.date_input("选择具体区间", value=st.session_state.get('r', (td, td + timedelta(days=1))))
         sitters = ["梦蕊", "依蕊"]
         current_active = [s for s in sitters if st.checkbox(f"{s} (出勤)", value=True)]
 
     if not df_kb.empty and isinstance(date_sel, tuple) and len(date_sel) == 2:
-        if st.button("✨ 拟定最优路径方案"):
+        if st.button("✨ 1. 拟定全周期调度方案"):
             all_plans = []
             days = pd.date_range(date_sel[0], date_sel[1]).tolist()
             df_kb = execute_smart_dispatch(df_kb, current_active)
@@ -262,14 +264,14 @@ elif st.session_state['page'] == "智能看板":
                         if day_res:
                             cd = pd.concat(day_res); cd['作业日期'] = d.strftime('%Y-%m-%d'); all_plans.append(cd)
                 p_bar.progress((i + 1) / len(days))
-            st.session_state['final_plan_v39'] = pd.concat(all_plans) if all_plans else None
-            st.success("✅ 方案拟定完成！地图已自动对焦。")
+            st.session_state['final_plan_v40'] = pd.concat(all_plans) if all_plans else None
+            st.success("✅ 拟定完成！地图已自动对焦。")
 
-        if st.session_state.get('final_plan_v39') is not None:
-            res_f = st.session_state['final_plan_v39']
-            st.download_button("📥 导出全量 Excel (含分页)", data=generate_excel_multisheet(res_f), file_name="Dispatch.xlsx")
+        if st.session_state.get('final_plan_v40') is not None:
+            res_f = st.session_state['final_plan_v40']
+            st.download_button("📥 导出多 Sheet Excel", data=generate_excel_multisheet(res_f), file_name="Dispatch.xlsx")
             c_f1, c_f2 = st.columns(2)
-            v_day = c_f1.selectbox("📅 查看日期", sorted(res_f['作业日期'].unique()))
+            v_day = c_f1.selectbox("📅 日期", sorted(res_f['作业日期'].unique()))
             v_sit = c_f2.selectbox("👤 筛选人员", ["全部"] + sorted(res_f[res_f['作业日期'] == v_day]['喂猫师'].unique().tolist()))
             v_data = res_f[res_f['作业日期'] == v_day]
             if v_sit != "全部": v_data = v_data[v_data['喂猫师'] == v_sit]
@@ -278,7 +280,7 @@ elif st.session_state['page'] == "智能看板":
                     layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color='color', get_radius=350, pickable=True)]))
                 st.markdown("🔵 **梦蕊** | 🟠 **依蕊**")
                 st.data_editor(v_data[['拟定顺序', '喂猫师', '宠物名字', '详细地址', '备注']].sort_values('拟定顺序'), use_container_width=True)
-                if st.button("📋 生成微信简报"):
+                if st.button("📋 生成微信排班简报"):
                     sum_txt = f"📢 任务清单 ({v_day})\n\n"
                     for s in (current_active if v_sit == "全部" else [v_sit]):
                         s_tasks = v_data[v_data['喂猫师'] == s].sort_values('拟定顺序')
@@ -286,4 +288,4 @@ elif st.session_state['page'] == "智能看板":
                             sum_txt += f"👤 喂猫师：{s}\n"
                             for _, t in s_tasks.iterrows(): sum_txt += f"   {t['拟定顺序']}. {t['宠物名字']} - {t['详细地址']}\n"
                             sum_txt += "\n"
-                    st.text_area("复制简报：", sum_txt, height=200)
+                    st.text_area("复制发给团队：", sum_txt, height=200)
