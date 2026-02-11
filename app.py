@@ -5,22 +5,21 @@ import pydeck as pdk
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-import json
 
-# --- 1. 核心连接配置 (Secrets 读取) ---
+# --- 1. 核心配置 (Secrets 读取) ---
 APP_ID = st.secrets.get("FEISHU_APP_ID", "").strip()
 APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "").strip()
 APP_TOKEN = st.secrets.get("FEISHU_APP_TOKEN", "").strip() 
 TABLE_ID = st.secrets.get("FEISHU_TABLE_ID", "").strip() 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "").strip()
 
-# --- 2. 核心算法：调度大脑 ---
+# --- 2. 核心算法：派单与路径 ---
 
 def get_distance(p1, p2):
     return np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
 
 def optimize_route(df_sitter):
-    """路径算法：锁定 ID 传递，优化作业顺序"""
+    """锁定 ID 并优化顺序"""
     if len(df_sitter) <= 1:
         df_sitter['拟定顺序'] = range(1, len(df_sitter) + 1)
         return df_sitter
@@ -39,7 +38,7 @@ def optimize_route(df_sitter):
     return res_df
 
 def execute_smart_dispatch(df, active_sitters):
-    """一只猫固定一人逻辑：建立宠物+地址唯一映射"""
+    """一猫一人固定逻辑"""
     if '喂猫师' not in df.columns: df['喂猫师'] = ""
     df['喂猫师'] = df['喂猫师'].fillna("")
     cat_to_sitter_map = {}
@@ -47,11 +46,9 @@ def execute_smart_dispatch(df, active_sitters):
         s_val = str(row.get('喂猫师', '')).strip()
         if s_val and s_val not in ["nan", ""]:
             cat_to_sitter_map[f"{row['宠物名字']}_{row['详细地址']}"] = s_val
-    
     sitter_load = {s: 0 for s in active_sitters}
     for s in df['喂猫师']:
         if s in sitter_load: sitter_load[s] += 1
-        
     for i, row in df.iterrows():
         if str(row.get('喂猫师', '')).strip() not in ["", "nan"]: continue
         key = f"{row['宠物名字']}_{row['详细地址']}"
@@ -64,7 +61,7 @@ def execute_smart_dispatch(df, active_sitters):
             sitter_load[best] += 1
     return df
 
-# --- 3. 飞书 API 交互逻辑 (修复 NameError) ---
+# --- 3. 飞书 API 交互逻辑 (加固回写) ---
 
 def get_feishu_token():
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -88,20 +85,21 @@ def fetch_feishu_data():
         return df
     except: return pd.DataFrame()
 
-def update_feishu_record_with_log(record_id, sitter_name):
-    """同步回写并返回详细诊断日志"""
+def update_feishu_robust(record_id, sitter_name):
+    """回写核心：解决 Extra data 报错"""
     token = get_feishu_token()
-    if not token: return False, "无法获取 Token"
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records/{record_id}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"fields": {"喂猫师": str(sitter_name)}}
     try:
         r = requests.patch(url, headers=headers, json=payload, timeout=10)
-        res_json = r.json()
-        if res_json.get("code") == 0: return True, "成功"
-        return False, f"飞书返回错误: {res_json.get('msg')} (代码:{res_json.get('code')})"
+        if r.status_code == 200:
+            res = r.json()
+            if res.get("code") == 0: return True, "成功"
+            return False, f"API 逻辑错误: {res.get('msg')}"
+        return False, f"HTTP 错误 {r.status_code}: {r.text[:50]}"
     except Exception as e:
-        return False, f"网络请求异常: {str(e)}"
+        return False, f"请求崩溃: {str(e)}"
 
 @st.cache_data(show_spinner=False)
 def get_coords(address):
@@ -114,7 +112,7 @@ def get_coords(address):
     except: pass
     return None, None
 
-# --- 4. 视觉方案与 UI (30px 巨幕) ---
+# --- 4. 视觉方案与 UI (30px) ---
 
 def set_ui():
     st.markdown("""
@@ -127,13 +125,13 @@ def set_ui():
             background-color: #FFFFFF !important; color: #000000 !important;
         }
         .stDataFrame { font-size: 16px !important; }
-        .diag-box { background: #fff1f0; border: 1px solid #ffa39e; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 13px; }
+        .diag-box { background: #fff1f0; border: 1px solid #ffa39e; padding: 10px; font-family: monospace; font-size: 13px; margin-bottom: 5px; }
         </style>
         """, unsafe_allow_html=True)
 
-# --- 5. 页面控制 ---
+# --- 5. 流程中心 ---
 
-st.set_page_config(page_title="指挥中心 V19.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V20.0", layout="wide")
 set_ui()
 
 if 'page' not in st.session_state: st.session_state['page'] = "智能看板"
@@ -168,7 +166,7 @@ if st.session_state['page'] == "数据中心":
     with col_in2:
         with st.expander("✍️ 单条信息手动录入"):
             with st.form("manual"):
-                a = st.text_input("详细地址*"); n = st.text_input("名字"); s = st.date_input("开始日期"); e = st.date_input("结束日期")
+                a = st.text_input("地址*"); n = st.text_input("名"); s = st.date_input("开始"); e = st.date_input("结束")
                 if st.form_submit_button("保存至云端"):
                     f = {"详细地址": a.strip(), "宠物名字": n.strip(), "投喂频率": 1, "服务开始日期": int(datetime.combine(s, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(e, datetime.min.time()).timestamp()*1000)}
                     requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {get_feishu_token()}"}, json={"fields": f})
@@ -180,14 +178,14 @@ if st.session_state['page'] == "数据中心":
     
     df_p = st.session_state['feishu_cache'].copy()
     if not df_p.empty:
-        # --- 预览净化：隐藏坐标列，转换日期格式 ---
+        # --- 预览净化：隐藏坐标，格式化日期 ---
         disp = df_p.drop(columns=['lng', 'lat', '_system_id'], errors='ignore')
         for c in ['服务开始日期', '服务结束日期']:
             disp[c] = pd.to_datetime(disp[c], unit='ms', errors='coerce').dt.strftime('%Y-%m-%d')
         st.dataframe(disp, use_container_width=True)
 
 elif st.session_state['page'] == "智能看板":
-    st.title("🚀 智能看板 (诊断 V19.0)")
+    st.title("🚀 调度看板 (回写修复版)")
     df_kb = st.session_state['feishu_cache'].copy()
     if not df_kb.empty and isinstance(date_range, tuple) and len(date_range) == 2:
         for c in ['服务开始日期', '服务结束日期']: df_kb[c] = pd.to_datetime(df_kb[c], unit='ms', errors='coerce')
@@ -210,29 +208,27 @@ elif st.session_state['page'] == "智能看板":
                         if d_res:
                             cd = pd.concat(d_res); cd['作业日期'] = d.strftime('%Y-%m-%d'); all_plans.append(cd)
                 p_bar.progress((i + 1) / len(days))
-            st.session_state['final_plan_v19'] = pd.concat(all_plans) if all_plans else None
+            st.session_state['final_plan_v20'] = pd.concat(all_plans) if all_plans else None
             st.success("✅ 方案拟定完成！")
 
-        if st.session_state.get('final_plan_v19') is not None:
-            res_f = st.session_state['final_plan_v19']
+        if st.session_state.get('final_plan_v20') is not None:
+            res_f = st.session_state['final_plan_v20']
             v_day = st.selectbox("📅 选择日期", sorted(res_f['作业日期'].unique()))
             v_data = res_f[res_f['作业日期'] == v_day]
             if not v_data.empty:
                 st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=v_data['lng'].mean(), latitude=v_data['lat'].mean(), zoom=11), layers=[pdk.Layer("ScatterplotLayer", v_data, get_position='[lng, lat]', get_color=[0, 123, 255, 160], get_radius=350)]))
                 st.data_editor(v_data[['拟定顺序', '喂猫师', '宠物名字', '详细地址', '备注']].sort_values('拟定顺序'), use_container_width=True)
                 
-                # 同步回写按钮 (核心修复点)
                 if st.button("✅ 确认并同步飞书"):
                     logs = []; suc = 0; tot = len(res_f); sync_p = st.progress(0)
                     for i, (_, row) in enumerate(res_f.iterrows()):
                         if row.get('_system_id') and row.get('喂猫师'):
-                            # 调用修正后的函数名
-                            ok, msg = update_feishu_record_with_log(row['_system_id'], row['喂猫师'])
+                            ok, msg = update_feishu_robust(row['_system_id'], row['喂猫师'])
                             if ok: suc += 1
-                            else: logs.append(f"订单[{row['宠物名字']}]: {msg}")
+                            else: logs.append(f"猫[{row['宠物名字']}]: {msg}")
                         sync_p.progress((i + 1) / tot)
                     st.success(f"🎉 同步完成！回写 {suc} 条记录。")
                     if logs:
-                        st.error("同步异常日志：")
+                        st.error("同步异常报告：")
                         for l in logs[:10]: st.markdown(f'<div class="diag-box">{l}</div>', unsafe_allow_html=True)
                     st.session_state.pop('feishu_cache', None)
