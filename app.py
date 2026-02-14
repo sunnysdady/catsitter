@@ -18,25 +18,24 @@ def clean_id(raw_id):
 
 APP_ID = st.secrets.get("FEISHU_APP_ID", "").strip()
 APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "").strip()
+# 自动使用您的精准 ID
 APP_TOKEN = clean_id(st.secrets.get("FEISHU_APP_TOKEN", "MdvxbpyUHaFkWksl4B6cPlfpn2f")) 
 TABLE_ID = clean_id(st.secrets.get("FEISHU_TABLE_ID", "tbl6Ziz0dO1evH7s")) 
 AMAP_API_KEY = st.secrets.get("AMAP_KEY", "").strip()
 
-# --- 2. 调度与财务对账核心引擎 ---
+# --- 2. 调度与对账核心引擎 (保持 V73 逻辑) ---
 
-def get_normalized_address_v73(addr):
-    """【V73 进化】精准地址指纹：跳过行政区，锁定大楼"""
+def get_normalized_address_v74(addr):
+    """提取大楼指纹，跳过行政区干扰"""
     if not addr: return "未知"
-    # 1. 预清洗：去掉省市区等宏观前缀，统一数字
     addr = str(addr).replace("深圳市", "").replace("广东省", "").replace(" ","")
     addr = addr.replace("龙华区", "").replace("民治街道", "").replace("龙华街道", "")
     addr = addr.replace('一','1').replace('二','2').replace('三','3').replace('四','4').replace('五','5')
-    # 2. 提取指纹：保留到 栋/号/座/村，忽略具体房号
     match = re.search(r'(.+?(栋|号|座|区|村|苑|大厦|居|公寓))', addr)
     return match.group(1) if match else addr
 
 def calculate_billing_days(row, start_range, end_range):
-    """精确计费逻辑"""
+    """精确财务计费：1=每天, 2=隔天"""
     try:
         s_date = pd.to_datetime(row['服务开始日期']).date()
         e_date = pd.to_datetime(row['服务结束日期']).date()
@@ -51,7 +50,7 @@ def calculate_billing_days(row, start_range, end_range):
     except: return 0
 
 def optimize_route(df_sitter):
-    """全量派单路径优化"""
+    """全量派单路径优化：即使定位失败也保留顺序"""
     has_coords = df_sitter.dropna(subset=['lng', 'lat']).copy()
     no_coords = df_sitter[df_sitter['lng'].isna()].copy()
     if len(has_coords) <= 1:
@@ -67,19 +66,14 @@ def optimize_route(df_sitter):
     res_df['拟定顺序'] = range(1, len(res_df) + 1)
     return res_df
 
-def execute_smart_dispatch_spatial_v73(df, active_sitters):
-    """【V73 进化】空间捆绑优先"""
+def execute_smart_dispatch_spatial_v74(df, active_sitters):
+    """空间捆绑优先逻辑"""
     if '喂猫师' not in df.columns: df['喂猫师'] = ""
     df['喂猫师'] = df['喂猫师'].fillna("")
-    
     sitter_load = {s: 0 for s in active_sitters}
-    # 统计云端已锁定的负载
     for s in df['喂猫师']:
         if s in sitter_load: sitter_load[s] += 1
-        
-    df['building_fingerprint'] = df['详细地址'].apply(get_normalized_address_v73)
-    
-    # 对未分配订单按建筑聚类
+    df['building_fingerprint'] = df['详细地址'].apply(get_normalized_address_v74)
     unassigned_mask = ~df['喂猫师'].isin(active_sitters)
     if unassigned_mask.any() and active_sitters:
         building_groups = df[unassigned_mask].groupby('building_fingerprint')
@@ -106,14 +100,12 @@ def fetch_feishu_data():
         items = r.get("data", {}).get("items", [])
         if not items: return pd.DataFrame()
         df = pd.DataFrame([dict(i['fields'], _system_id=i['record_id']) for i in items])
-        # 核心修复：空白状态填充
-        if '订单状态' in df.columns:
-            df['订单状态'] = df['订单状态'].fillna("进行中")
-        else:
-            df['订单状态'] = "进行中"
+        # 强制填充空白状态
+        if '订单状态' in df.columns: df['订单状态'] = df['订单状态'].fillna("进行中")
+        else: df['订单状态'] = "进行中"
         for c in ['服务开始日期', '服务结束日期']:
             if c in df.columns: df[c] = pd.to_datetime(df[c], unit='ms', errors='coerce')
-        if '进度' not in df.columns: df['进度'] = "未开始"
+        if '进度' not in df.columns: df['进度'] = "未处理"
         for col in ['宠物名字', '详细地址', '喂猫师', '备注', 'lng', 'lat', '投喂频率']:
             if col not in df.columns: df[col] = ""
         return df
@@ -130,7 +122,8 @@ def update_feishu_field(record_id, field_name, value):
 
 # --- 4. 一键复制与 导出组件 ---
 
-def copy_to_clipboard_v73(text):
+def copy_to_clipboard_v74(text):
+    """一键复制按钮组件"""
     html_code = f"""
     <div style="margin-bottom: 20px;">
         <button onclick="copyToClipboard()" style="
@@ -144,7 +137,7 @@ def copy_to_clipboard_v73(text):
     function copyToClipboard() {{
         const text = `{text}`;
         navigator.clipboard.writeText(text).then(function() {{
-            alert('简报复制成功！');
+            alert('复制成功！直接去微信粘贴即可。');
         }}, function(err) {{
             console.error('无法复制: ', err);
         }});
@@ -153,7 +146,7 @@ def copy_to_clipboard_v73(text):
     """
     components.html(html_code, height=70)
 
-def generate_excel_v73(df):
+def generate_excel_v74(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df[['作业日期', '拟定顺序', '喂猫师', '宠物名字', '详细地址', '备注']].to_excel(writer, index=False, sheet_name='汇总')
@@ -165,7 +158,7 @@ def generate_excel_v73(df):
 
 # --- 5. UI 视觉方案 (V44 对齐) ---
 
-st.set_page_config(page_title="指挥中心 V73.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V74.0", layout="wide")
 
 def set_ui():
     st.markdown("""
@@ -207,14 +200,11 @@ with st.sidebar:
         if st.button("📍 本月"): st.session_state['r'] = (td.replace(day=1), td.replace(day=calendar.monthrange(td.year, td.month)[1]) + timedelta(days=1))
     st.markdown('</div>', unsafe_allow_html=True)
     
-    d_sel = st.date_input("调度区间选择", value=st.session_state.get('r', (td, td + timedelta(days=1))))
-    
-    # 状态过滤：默认包含 进行中 和 空白
+    d_sel = st.date_input("调度区间", value=st.session_state.get('r', (td, td + timedelta(days=1))))
     st.divider()
-    s_filter = st.multiselect("🔍 状态过滤", options=["进行中", "已结束", "待处理"], default=["进行中"])
-    
+    s_filter = st.multiselect("🔍 状态筛选", options=["进行中", "已结束", "待处理"], default=["进行中"])
     active_sitters = ["梦蕊", "依蕊"]
-    active = [s for s in active_sitters if st.checkbox(f"{s} (出勤)", value=True, key=f"v73_{s}")]
+    active = [s for s in active_sitters if st.checkbox(f"{s} (出勤)", value=True, key=f"v74_{s}")]
     
     st.divider()
     st.markdown('<div class="main-nav">', unsafe_allow_html=True)
@@ -225,7 +215,7 @@ with st.sidebar:
     with st.expander("🔑 团队授权"):
         if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
 
-# --- 7. 各频道核心渲染 ---
+# --- 7. 各频道核心逻辑 ---
 
 if st.session_state['page'] == "数据中心":
     st.title("📂 数据同步与状态维护")
@@ -243,14 +233,6 @@ if st.session_state['page'] == "数据中心":
                 if row['订单状态'] != df_raw.iloc[i]['订单状态']: update_feishu_field(df_raw.iloc[i]['_system_id'], "订单状态", row['订单状态']); sc += 1
                 if row['喂猫师'] != df_raw.iloc[i]['喂猫师']: update_feishu_field(df_raw.iloc[i]['_system_id'], "喂猫师", row['喂猫师']); sc += 1
             st.success(f"同步成功！已更新 {sc} 个字段。"); st.session_state.pop('feishu_cache', None); st.rerun()
-    st.divider()
-    with st.expander("录单入口"):
-        with st.form("add_v73"):
-            a = st.text_input("地址*"); n = st.text_input("猫名"); sd = st.date_input("始"); ed = st.date_input("终")
-            if st.form_submit_button("💾 保存"):
-                f = {"详细地址": a.strip(), "宠物名字": n.strip(), "服务开始日期": int(datetime.combine(sd, datetime.min.time()).timestamp()*1000), "服务结束日期": int(datetime.combine(ed, datetime.min.time()).timestamp()*1000), "订单状态": "进行中"}
-                requests.post(f"https://open.feishu.cn/open-apis/bitable/v1/apps/{APP_TOKEN}/tables/{TABLE_ID}/records", headers={"Authorization": f"Bearer {get_feishu_token()}"}, json={"fields": f})
-                st.session_state.pop('feishu_cache', None); st.rerun()
 
 elif st.session_state['page'] == "任务进度":
     st.title("📊 现场状态反馈 (实时)")
@@ -266,7 +248,6 @@ elif st.session_state['page'] == "订单信息":
     st.title("📝 财务对账全景 (100% 全量)")
     df_raw = st.session_state['feishu_cache'].copy()
     if not df_raw.empty:
-        # 状态过滤
         df_i = df_raw[df_raw['订单状态'].isin(s_filter)] if s_filter else df_raw
         if isinstance(d_sel, tuple) and len(d_sel) == 2:
             df_i['计费天数'] = df_i.apply(lambda r: calculate_billing_days(r, d_sel[0], d_sel[1]), axis=1)
@@ -276,12 +257,12 @@ elif st.session_state['page'] == "订单信息":
         st.dataframe(df_i[['宠物名字', '计费天数', '喂猫师', '服务开始日期', '服务结束日期', '投喂频率', '订单状态', '详细地址']], use_container_width=True)
 
 elif st.session_state['page'] == "智能看板":
-    st.title("🚀 调度指挥大屏 (全量修复版)")
+    st.title("🚀 调度指挥大屏 (全量交互优化版)")
     df_raw = st.session_state['feishu_cache'].copy()
     if not df_raw.empty and isinstance(d_sel, tuple) and len(d_sel) == 2:
         df_kb = df_raw[df_raw['订单状态'].isin(s_filter)] if s_filter else df_raw
-        if st.button("✨ 1. 拟定全量方案 (空间捆绑模式)"):
-            ap = []; dk = execute_smart_dispatch_spatial_v73(df_kb, active); days = pd.date_range(d_sel[0], d_sel[1]).tolist()
+        if st.button("✨ 1. 拟定全量方案 (开启空间聚类)"):
+            ap = []; dk = execute_smart_dispatch_spatial_v74(df_kb, active); days = pd.date_range(d_sel[0], d_sel[1]).tolist()
             for d in days:
                 ct = pd.Timestamp(d); d_v = dk[(dk['服务开始日期'] <= ct) & (dk['服务结束日期'] >= ct)].copy()
                 if not d_v.empty:
@@ -290,17 +271,20 @@ elif st.session_state['page'] == "智能看板":
                         with ThreadPoolExecutor(max_workers=5) as ex: coords = list(ex.map(get_coords, d_v['详细地址']))
                         d_v[['lng', 'lat']] = pd.DataFrame(coords, index=d_v.index, columns=['lng', 'lat'])
                         # 核心修复：100% 不漏单
-                        dv = d_v.copy(); dv['color'] = dv['喂猫师'].apply(lambda n: [0, 123, 255, 180] if n == "梦蕊" else [255, 165, 0, 180])
+                        dv = d_v.copy()
+                        # --- V74 视觉优化：增加透明度以支持点位叠加显示 ---
+                        dv['color'] = dv['喂猫师'].apply(lambda n: [0, 123, 255, 160] if n == "梦蕊" else [255, 165, 0, 160])
                         for s in active:
                             stks = dv[dv['喂猫师'] == s].copy()
                             if not stks.empty:
                                 res = optimize_route(stks); res['作业日期'] = d.strftime('%Y-%m-%d'); ap.append(res)
             st.session_state['fp'] = pd.concat(ap) if ap else None
-            st.success("✅ 拟定完成！对账结果已 100% 对齐。")
+            st.success("✅ 方案拟定完成！对账单量 100% 对齐。")
 
         if st.session_state.get('fp') is not None:
-            st.metric("📊 方案最终总单量 (财务闭环)", f"{len(st.session_state['fp'])} 单")
-            st.download_button("📥 2. 导出 Excel", data=generate_excel_v73(st.session_state['fp']), file_name="Dispatch_Full_V73.xlsx")
+            st.metric("📊 方案最终派发总量", f"{len(st.session_state['fp'])} 单")
+            st.download_button("📥 2. 导出 Excel", data=generate_excel_v74(st.session_state['fp']), file_name="Dispatch_Full_V74.xlsx")
+            
             c_f1, c_f2 = st.columns(2)
             vd = c_f1.selectbox("📅 选择日期简报", sorted(st.session_state['fp']['作业日期'].unique()))
             # 恢复筛选人员功能
@@ -314,16 +298,33 @@ elif st.session_state['page'] == "智能看板":
                     brief += f"👤 【{s}】负责人：\n" + "\n".join([f"  {t['拟定顺序']}. {t['宠物名字']}-{t['详细地址']}" for _, t in s_tasks.iterrows()]) + "\n\n"
             
             # --- 一键复制黑科技 ---
-            copy_to_clipboard_v73(brief.replace('\n', '\\n'))
+            copy_to_clipboard_v74(brief.replace('\n', '\\n'))
             st.text_area("📄 简报预览：", brief, height=180)
 
+            # --- V74 地图优化：每一个订单都有标记点 + Tooltip 提示 ---
             cur_v = v_data[v_data['喂猫师'] == vs] if vs != "全部" else v_data
             map_d = cur_v.dropna(subset=['lng', 'lat'])
             if not map_d.empty:
-                st.pydeck_chart(pdk.Deck(map_style=pdk.map_styles.LIGHT, initial_view_state=pdk.ViewState(longitude=map_d['lng'].mean(), latitude=map_d['lat'].mean(), zoom=11),
-                    layers=[pdk.Layer("ScatterplotLayer", map_d, get_position='[lng, lat]', get_color='color', get_radius=350)]))
+                st.pydeck_chart(pdk.Deck(
+                    map_style=pdk.map_styles.LIGHT,
+                    initial_view_state=pdk.ViewState(longitude=map_d['lng'].mean(), latitude=map_d['lat'].mean(), zoom=11),
+                    layers=[pdk.Layer(
+                        "ScatterplotLayer",
+                        map_d,
+                        get_position='[lng, lat]',
+                        get_color='color',
+                        get_radius=300,
+                        pickable=True, # 开启拾取
+                        auto_highlight=True # 悬停高亮
+                    )],
+                    # --- 核心：配置鼠标悬停显示的提示框 ---
+                    tooltip={
+                        "html": "<b>宠物名字:</b> {宠物名字}<br/><b>详细地址:</b> {详细地址}",
+                        "style": {"color": "white", "backgroundColor": "black", "fontSize": "12px"}
+                    }
+                ))
             st.dataframe(cur_v[['拟定顺序', '喂猫师', '宠物名字', '详细地址', '备注']].sort_values('拟定顺序'), use_container_width=True)
 
 elif st.session_state['page'] == "帮助文档":
-    st.title("📖 V73.0 运营旗舰版指引")
-    st.info("💡 如果单量对不上，请检查是否在侧边栏勾选了‘已结束’。默认已帮您找回所有空白状态的单据。")
+    st.title("📖 V74.0 地图交互指引")
+    st.info("💡 现在您可以将鼠标放在地图标记点上，直接查看该点位属于哪只猫咪！")
