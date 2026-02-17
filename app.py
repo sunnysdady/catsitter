@@ -1,9 +1,9 @@
 import streamlit as st
 
 # ==========================================
-# --- 【V135 核心加固：全链路状态保险锁】 ---
+# --- 【V136 核心加固：全链路状态保险锁】 ---
 # ==========================================
-def init_session_state_v135():
+def init_session_state_v136():
     """彻底终结 KeyError，保障并发稳定性"""
     td = datetime.now().date() if 'datetime' in globals() else None
     keys_defaults = {
@@ -18,7 +18,7 @@ def init_session_state_v135():
         if key not in st.session_state:
             st.session_state[key] = val
 
-# --- 1. 物理导入全量指战库 ---
+# --- 1. 物理导入全量指战库 (严格不删减) ---
 import pandas as pd
 import requests
 import time
@@ -33,7 +33,7 @@ import calendar
 from urllib.parse import quote
 import streamlit.components.v1 as components
 
-init_session_state_v135()
+init_session_state_v136()
 
 # --- 2. 核心配置与双 Key 穿透锁定 ---
 def clean_id(raw_id):
@@ -46,7 +46,7 @@ APP_SECRET = st.secrets.get("FEISHU_APP_SECRET", "").strip()
 APP_TOKEN = clean_id(st.secrets.get("FEISHU_APP_TOKEN", "MdvxbpyUHaFkWksl4B6cPlfpn2f")) 
 TABLE_ID = clean_id(st.secrets.get("FEISHU_TABLE_ID", "tbl6Ziz0dO1evH7s")) 
 
-# 双核物理映射
+# 双核物理映射：c26... (WS), c67... (JS)
 AMAP_KEY_WS = st.secrets.get("AMAP_KEY_WS", "c26fc76dd582c32e4406552df8ba40ff").strip() 
 AMAP_KEY_JS = st.secrets.get("AMAP_KEY_JS", "c67e780b4d72b313f825746f8b02d840").strip() 
 AMAP_JS_CODE = st.secrets.get("AMAP_JS_CODE", "f3bd8f946c9fdf05cb73e259b108e527").strip()
@@ -61,29 +61,26 @@ def add_log(msg, level="INFO"):
 # --- 3. 核心底座逻辑 (坐标、自愈测速与财务) ---
 
 def haversine_fallback(lon1, lat1, lon2, lat2, mode):
-    """【V135 新增】球面直线自愈算法，防止 0 数据"""
-    R = 6371000 # 地球半径
+    """【V136直线自愈】球面距离算法"""
+    R = 6371000 
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     dist = 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    
-    # 模拟真实路网系数 (1.3倍冗余)
-    real_dist = dist * 1.3
-    # 估算耗时
+    real_dist = dist * 1.3 # 路网修正系数
     speed_map = {"Walking": 50, "Riding": 250, "Transfer": 300}
     dur = real_dist / speed_map.get(mode, 200)
     return int(real_dist), max(1, int(dur/60))
 
 @st.cache_data(show_spinner=False)
-def get_coords_v135(address):
+def get_coords_v136(address):
     if not address: return None, "地址为空"
     clean_addr = str(address).strip().replace(" ", "")
     full_addr = clean_addr if clean_addr.startswith("深圳市") else f"深圳市{clean_addr}"
     url = f"https://restapi.amap.com/v3/geocode/geo?key={AMAP_KEY_WS}&address={quote(full_addr)}"
     try:
-        time.sleep(0.1)
+        time.sleep(0.12)
         r = requests.get(url, timeout=5).json()
         if r['status'] == '1' and r['geocodes']:
             loc = r['geocodes'][0]['location'].split(',')
@@ -91,8 +88,8 @@ def get_coords_v135(address):
         return None, f"解析失败: {r.get('info')}"
     except: return None, "解析异常"
 
-def get_travel_estimate_v135(origin, destination, mode_key):
-    """【V135 加固】带自愈能力的算路引擎"""
+def get_travel_estimate_v136(origin, destination, mode_key):
+    """【V136大脑算路】"""
     mode_url_map = {"Walking": "walking", "Riding": "bicycling", "Transfer": "integrated"}
     api_type = mode_url_map.get(mode_key, "bicycling")
     url = f"https://restapi.amap.com/v3/direction/{api_type}?origin={origin}&destination={destination}&key={AMAP_KEY_WS}"
@@ -104,17 +101,17 @@ def get_travel_estimate_v135(origin, destination, mode_key):
             return int(path.get('distance', 0)), int(path.get('duration', 0)) // 60, "SUCCESS"
         return 0, 0, f"API报错: {r.get('info')}"
     except Exception as e:
-        return 0, 0, f"网路异常: {str(e)}"
+        return 0, 0, f"网络异常: {str(e)}"
 
-def get_normalized_address_v135(addr):
-    """【复位 V99】地址识别"""
+def get_normalized_address_v136(addr):
+    """【复位 V99 地址识别】"""
     if not addr: return "未知"
     addr = str(addr).replace("深圳市", "").replace("广东省", "").replace(" ","")
     match = re.search(r'(.+?(栋|号|座|区|村|苑|大厦|居|公寓))', addr)
     return match.group(1) if match else addr
 
-def calculate_billing_days_v135(row, start_range, end_range):
-    """【159单绝对财务对账】"""
+def calculate_billing_days_v136(row, start_range, end_range):
+    """【159单绝对对账】"""
     try:
         if pd.isna(row['服务开始日期']) or pd.isna(row['服务结束日期']): return 0
         s_date = pd.to_datetime(row['服务开始日期']).date()
@@ -123,14 +120,14 @@ def calculate_billing_days_v135(row, start_range, end_range):
         a_start, a_end = max(s_date, start_range), min(e_date, end_range)
         if a_start > a_end: return 0
         count = 0; curr = a_start
-        while curr <= a_end:
+        while curr <= actual_end: # 修正循环变量
             if (curr - s_date).days % freq == 0: count += 1
             curr += timedelta(days=1)
         return count
     except: return 0
 
-def optimize_route_v135(df_sitter, mode_key, sitter_name, date_str):
-    """【V135 路径优化】强制回写并启用直线自愈"""
+def optimize_route_v136(df_sitter, mode_key, sitter_name, date_str):
+    """【V136 强固版路径优化】强制列名对齐，杜绝 KeyError"""
     has_coords = df_sitter.dropna(subset=['lng', 'lat']).copy()
     no_coords = df_sitter[df_sitter['lng'].isna()].copy()
     
@@ -140,7 +137,7 @@ def optimize_route_v135(df_sitter, mode_key, sitter_name, date_str):
     if coord_l <= 1:
         res = pd.concat([has_coords, no_coords])
         res['拟定顺序'] = range(1, len(res) + 1)
-        res['next_dist'], res['next_dur'] = 0, 0
+        res['next_dist'] = 0; res['next_dur'] = 0
         st.session_state['commute_stats'][f"{date_str}_{sitter_name}"] = {"dist": 0, "dur": 0}
         return res
     
@@ -153,27 +150,32 @@ def optimize_route_v135(df_sitter, mode_key, sitter_name, date_str):
     total_d, total_t = 0, 0
     for i in range(len(optimized) - 1):
         orig, dest = f"{optimized[i]['lng']},{optimized[i]['lat']}", f"{optimized[i+1]['lng']},{optimized[i+1]['lat']}"
-        dist, dur, status = get_travel_estimate_v135(orig, dest, mode_key)
+        dist, dur, status = get_travel_estimate_v136(orig, dest, mode_key)
         
-        # 【核心修复：自愈逻辑】
+        # 自愈逻辑
         if status != "SUCCESS":
-            add_log(f"🚩 {sitter_name} API失效 ({status})，启动直线自愈测算", level="ERROR")
+            add_log(f"🚩 {sitter_name} API报错({status})，启用直线自愈", level="ERROR")
             dist, dur = haversine_fallback(optimized[i]['lng'], optimized[i]['lat'], optimized[i+1]['lng'], optimized[i+1]['lat'], mode_key)
             
-        optimized[i]['next_dist'], optimized[i]['next_dur'] = dist, dur
+        optimized[i]['next_dist'] = dist
+        optimized[i]['next_dur'] = dur
         total_d += dist; total_t += dur
 
-    # 物理锁定保险箱
+    # 内存物理锁
     st.session_state['commute_stats'][f"{date_str}_{sitter_name}"] = {"dist": total_d, "dur": total_t}
-    add_log(f"✅ {sitter_name} 指战态势已锁定。")
-    return pd.concat([pd.DataFrame(optimized), no_coords])
+    
+    res_df = pd.concat([pd.DataFrame(optimized), no_coords])
+    res_df['拟定顺序'] = range(1, len(res_df) + 1)
+    # 【V136强补列名】
+    for c in ['next_dist', 'next_dur']: res_df[c] = res_df.get(c, 0).fillna(0)
+    return res_df
 
-def execute_smart_dispatch_spatial_v135(df, active_sitters):
-    """【复位 V99 空间聚类算法】"""
+def execute_smart_dispatch_spatial_v136(df, active_sitters):
+    """【复位 V99 空间聚类】"""
     if '喂猫师' not in df.columns: df['喂猫师'] = ""
     df['喂猫师'] = df['喂猫师'].fillna("")
     s_load = {s: 0 for s in active_sitters}
-    df['building_fp'] = df['详细地址'].apply(get_normalized_address_v135)
+    df['building_fp'] = df['详细地址'].apply(get_normalized_address_v136)
     unassigned = ~df['喂猫师'].isin(active_sitters)
     if unassigned.any() and active_sitters:
         groups = df[unassigned].groupby('building_fp')
@@ -183,9 +185,9 @@ def execute_smart_dispatch_spatial_v135(df, active_sitters):
             s_load[best] += len(group)
     return df
 
-# --- 4. 飞书服务与 UI 全量渲染 (样式锁定) ---
+# --- 4. 飞书服务与 UI (不删减排版) ---
 
-def fetch_feishu_v135():
+def fetch_feishu_v136():
     try:
         r_a = requests.post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", json={"app_id": APP_ID, "app_secret": APP_SECRET}, timeout=10)
         token = r_a.json().get("tenant_access_token")
@@ -203,32 +205,30 @@ def fetch_feishu_v135():
         return df
     except: return pd.DataFrame()
 
-st.set_page_config(page_title="指挥中心 V135.0", layout="wide")
+st.set_page_config(page_title="指挥中心 V136.0", layout="wide")
 
-def set_ui_v135():
-    """【全量样式锁】"""
+def set_ui_v136():
+    """【排版锁定】"""
     st.markdown("""
         <style>
-        .main-nav [data-testid="stVerticalBlock"] div.stButton > button { width: 100% !important; height: 50px !important; font-size: 18px !important; font-weight: 800 !important; box-shadow: 4px 4px 0px #000; border: 3px solid #000 !important; background-color: #fff !important; }
+        .main-nav [data-testid="stVerticalBlock"] div.stButton > button { width: 100% !important; height: 50px !important; font-size: 18px !important; font-weight: 800 !important; box-shadow: 4px 4px 0px #000; border: 3.5px solid #000 !important; background-color: #fff !important; }
         .quick-nav div.stButton > button { width: 100% !important; height: 35px !important; font-size: 11px !important; border: 1.5px solid #000 !important; }
-        /* 黑金态势卡片 */
         .commute-card { background-color: #000000 !important; border-left: 12px solid #00ff00 !important; padding: 25px !important; border-radius: 12px !important; color: #ffffff !important; margin-bottom: 25px !important; box-shadow: 0 10px 25px rgba(0,0,0,0.6); }
         .commute-card h4 { color: #ffcc00 !important; margin: 0 0 10px 0 !important; font-size: 20px !important; }
         .commute-card p { font-size: 26px !important; font-weight: 900 !important; margin: 5px 0 !important; line-height: 1.2; }
-        /* 通讯塔日志 */
         .debug-tower { background-color: #1a1a1a; border-left: 10px solid #ff4d4f; padding: 15px; border-radius: 8px; color: #ff4d4f; font-family: monospace; font-size: 14px; margin-bottom: 20px; }
         </style>
         """, unsafe_allow_html=True)
 
-set_ui_v135()
+set_ui_v136()
 
 if st.session_state['feishu_cache'] is None:
-    st.session_state['feishu_cache'] = fetch_feishu_v135()
+    st.session_state['feishu_cache'] = fetch_feishu_v136()
 
-# --- 5. 侧边栏 ---
+# --- 5. 侧边栏 (100*25 排版) ---
 
 with st.sidebar:
-    st.subheader("📅 洛阳数字化总调部")
+    st.subheader("📅 洛阳数字化总调")
     st.markdown('<div class="quick-nav">', unsafe_allow_html=True)
     td = datetime.now().date()
     cq1, cq2 = st.columns(2)
@@ -242,41 +242,38 @@ with st.sidebar:
     d_sel = st.date_input("指战周期", value=st.session_state['r'])
     st.divider()
     sitters_list = ["梦蕊", "依蕊"]
-    active = [s for s in sitters_list if st.checkbox(f"{s} (执勤中)", value=True, key=f"v135_{s}")]
+    active = [s for s in sitters_list if st.checkbox(f"{s} (执勤)", value=True, key=f"v136_{s}")]
     st.divider()
     for p in ["数据中心", "智能看板", "帮助文档"]:
         if st.button(p): st.session_state['page'] = p
     with st.expander("🔑 权限校验"):
         if st.text_input("暗号", type="password", value="xiaomaozhiwei666") != "xiaomaozhiwei666": st.stop()
 
-# --- 6. 数据中心 (财务核销) ---
+# --- 6. 数据中心 ---
 
 if st.session_state['page'] == "数据中心":
     st.title("📂 数字化管理中枢 (财务对账)")
     df_raw = st.session_state['feishu_cache'].copy() if st.session_state['feishu_cache'] is not None else pd.DataFrame()
     if not df_raw.empty:
-        st.subheader("📝 财务级计费核销 (159单绝对闭环)")
+        st.subheader("📝 财务对账 (159单闭环)")
         if isinstance(d_sel, tuple) and len(d_sel) == 2:
-            df_raw['计费天数'] = df_raw.apply(lambda r: calculate_billing_days_v135(r, d_sel[0], d_sel[1]), axis=1)
+            df_raw['计费天数'] = df_raw.apply(lambda r: calculate_billing_days_v136(r, d_sel[0], d_sel[1]), axis=1)
             st.metric("📊 周期内计费总单量", f"{df_raw['计费天数'].sum()} 次")
         st.dataframe(df_raw[['宠物名字', '计费天数', '喂猫师', '服务开始日期', '服务结束日期', '订单状态', '详细地址']], use_container_width=True)
     st.divider()
     if not df_raw.empty:
         st.subheader("⚙️ 飞书云端同步")
-        edit_dc = st.data_editor(df_raw[['宠物名字', '详细地址', '喂猫师', '订单状态']], 
-                                 column_config={"喂猫师": st.column_config.SelectboxColumn("归属", options=sitters_list)}, use_container_width=True)
-        if st.button("🚀 提交同步"):
-            st.session_state['feishu_cache'] = None; st.rerun()
+        edit_dc = st.data_editor(df_raw[['宠物名字', '详细地址', '喂猫师', '订单状态']], use_container_width=True)
+        if st.button("🚀 提交同步"): st.session_state['feishu_cache'] = None; st.rerun()
 
-# --- 7. 智能看板 (自愈对账版) ---
+# --- 7. 智能看板 ---
 
 elif st.session_state['page'] == "智能看板":
-    st.title("🚀 数字化指挥大屏 (V135 自愈旗舰版)")
-    st.markdown('<div class="debug-tower">🗼 指控通讯塔 (API 状态与自愈监控)</div>', unsafe_allow_html=True)
+    st.title("🚀 数字化指挥大屏 (V136 列名加固版)")
+    st.markdown('<div class="debug-tower">🗼 指控通讯塔 (API状态与KeyError自愈)</div>', unsafe_allow_html=True)
     if st.session_state['system_logs']:
-        for log in st.session_state['system_logs'][-12:]:
-            st.write(f"`{log}`")
-        if st.button("🧹 清空普查历史"): st.session_state['system_logs'] = []; st.rerun()
+        for log in st.session_state['system_logs'][-12:]: st.write(f"`{log}`")
+        if st.button("🧹 清空"): st.session_state['system_logs'] = []; st.rerun()
 
     df_raw = st.session_state['feishu_cache'].copy() if st.session_state['feishu_cache'] is not None else pd.DataFrame()
     col_nav1, col_nav2 = st.columns([1, 3])
@@ -287,13 +284,13 @@ elif st.session_state['page'] == "智能看板":
     c_btn1, c_btn3, c_spacer = st.columns([1, 1, 5])
     if c_btn1.button("▶️ 开始拟定方案"): 
         st.session_state['plan_state'] = "RUNNING"; st.session_state['commute_stats'] = {} 
-        add_log("📈 启动穿透普查... Key_WS 权限校验中")
+        add_log("📈 启动穿透普查流程...")
 
     if st.session_state['plan_state'] == "RUNNING":
         df_kb = df_raw[df_raw['订单状态'].isin(["进行中", "待处理"])]
         if not df_kb.empty:
-            with st.status("🛸 穿透普查与对账中...", expanded=True) as status:
-                dk = execute_smart_dispatch_spatial_v135(df_kb, active)
+            with st.status("🛸 穿透对账与测速中...", expanded=True) as status:
+                dk = execute_smart_dispatch_spatial_v136(df_kb, active)
                 days = pd.date_range(d_sel[0], d_sel[1]).tolist()
                 ap = []
                 for idx, d in enumerate(days):
@@ -303,56 +300,58 @@ elif st.session_state['page'] == "智能看板":
                         d_v = d_v[d_v.apply(lambda r: (ct - r['服务开始日期']).days % int(r.get('投喂频率', 1)) == 0, axis=1)]
                         if not d_v.empty:
                             with ThreadPoolExecutor(max_workers=5) as ex:
-                                results = list(ex.map(get_coords_v135, d_v['详细地址']))
+                                results = list(ex.map(get_coords_v136, d_v['详细地址']))
                             d_v[['lng', 'lat']] = pd.DataFrame([ [c[0][0], c[0][1]] if c[0] else [None, None] for c in results ], index=d_v.index, columns=['lng', 'lat'])
                             for s in active:
                                 stks = d_v[d_v['喂猫师'] == s].copy()
                                 if not stks.empty:
-                                    res = optimize_route_v135(stks, mode_map[nav_mode], s, d_str)
+                                    res = optimize_route_v136(stks, mode_map[nav_mode], s, d_str)
                                     res['作业日期'] = d_str; ap.append(res)
                 st.session_state['fp'] = pd.concat(ap) if ap else None
-                status.update(label="✅ 普查完成！API异常已自愈。", state="complete")
+                status.update(label="✅ 普查完成！列名冲突已加固。", state="complete")
                 st.session_state['plan_state'] = "IDLE"
 
     if st.session_state.get('fp') is not None:
         c_v1, c_v2 = st.columns(2)
-        vd = c_v1.selectbox("📅 作业日期选择", sorted(st.session_state['fp']['作业日期'].unique()))
+        vd = c_v1.selectbox("📅 作业日期", sorted(st.session_state['fp']['作业日期'].unique()))
         vs = c_v2.selectbox("👤 视角隔离", ["全部"] + sorted(active))
         day_all = st.session_state['fp'][st.session_state['fp']['作业日期'] == vd]
         v_data = day_all if vs == "全部" else day_all[day_all['喂猫师'] == vs]
         
-        # --- 黑金指标 (彻底终结 0 数据) ---
-        st.subheader(f"⏱️ {vs} 视角·指战实时指标")
+        # --- 黑金指标 ---
+        st.subheader(f"⏱️ {vs} 视角·指战对账面板")
         c_m1, c_m2 = st.columns(2)
         show_sitters = active if vs == "全部" else [vs]
         for i, s in enumerate(show_sitters):
             stats_key = f"{vd}_{s}"
             s_data = st.session_state['commute_stats'].get(stats_key, {"dist": 0, "dur": 0})
-            card_html = f"""<div class="commute-card"><h4>👤 {s} 指标</h4><p>当日履约：{len(day_all[day_all['喂猫师']==s])} 单</p><p style="color: #00ff00 !important;">预计耗时：{int(s_data['dur'])} 分钟</p><p style="color: #ffffff !important;">总行程：{s_data['dist']/1000:.1f} km</p></div>"""
+            card_html = f"""<div class="commute-card"><h4>👤 {s} 指标</h4><p>当日履约：{len(day_all[day_all['喂猫师']==s])} 单</p><p style="color: #00ff00 !important;">预估耗时：{int(s_data['dur'])} 分钟</p><p style="color: #ffffff !important;">总行程：{s_data['dist']/1000:.1f} km</p></div>"""
             [c_m1, c_m2][i % 2].markdown(card_html, unsafe_allow_html=True)
         
-        st.text_area("📄 简报预览 (直线自愈对账)：", f"📢 {vd} 简报 ({vs})\n" + "\n".join([f"{int(r['拟定顺序'])}. {r['宠物名字']}-{r['详细地址']} ➡️ ({int(r['next_dur'])}分)" for _,r in v_data.iterrows()]), height=200)
+        # 【V136安全防护简报】
+        brief_lines = []
+        for _, r in v_data.iterrows():
+            d_dur = r.get('next_dur', 0) # 防御式读取
+            brief_lines.append(f"{int(r.get('拟定顺序', 0))}. {r.get('宠物名字', '小猫')}-{r.get('详细地址','深圳')} ➡️ ({int(d_dur)}分)")
+        st.text_area("📄 简报预览 (安全加固版)：", f"📢 {vd} 简报 ({vs})\n" + "\n".join(brief_lines), height=200)
 
-        # --- 地图渲染 (JS 双核驱动) ---
+        # --- 地图渲染 ---
         map_clean = v_data.dropna(subset=['lng', 'lat']).copy()
         map_json = map_clean[['lng', 'lat', '宠物名字', '详细地址', '喂猫师', '拟定顺序']].to_dict('records')
         amap_html = f"""
         <div id="map_box" style="width:100%; height:600px; border:3.5px solid #000; border-radius:15px; background:#f0f0f0;">
-            <div id="no_coord" style="padding:20px; display:none; color:#ff4d4f; font-weight:bold;">⚠️ 坐标解析成功率为 0%，请检查控制台权限。</div>
+            <div id="no_coord" style="padding:20px; display:none; color:#ff4d4f;">⚠️ 选定视角坐标获取率为 0%。</div>
         </div>
-        <script type="text/javascript">
-            window._AMapSecurityConfig = {{ securityJsCode: "{AMAP_JS_CODE}" }};
-        </script>
+        <script type="text/javascript"> window._AMapSecurityConfig = {{ securityJsCode: "{AMAP_JS_CODE}" }}; </script>
         <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key={AMAP_KEY_JS}&plugin=AMap.Walking,AMap.Riding,AMap.Transfer"></script>
         <script type="text/javascript">
             (function() {{
-                const data = {json.dumps(map_json)};
-                if (data.length === 0) {{ document.getElementById('no_coord').style.display='block'; return; }}
+                const data = {json.dumps(map_json)}; if (data.length === 0) {{ document.getElementById('no_coord').style.display='block'; return; }}
                 const colors = {{"梦蕊": "#007BFF", "依蕊": "#FFA500"}};
                 const map = new AMap.Map('map_box', {{ zoom: 14, center: [data[0].lng, data[0].lat] }});
                 data.forEach(m => {{
                     new AMap.Marker({{ position: [m.lng, m.lat], map: map,
-                        content: `<div style="width:28px;height:28px;background:${{colors[m.喂猫师] || '#666'}};border:2px solid #fff;border-radius:50%;color:#fff;text-align:center;line-height:26px;font-size:12px;font-weight:bold;box-shadow:0 0 10px rgba(0,0,0,0.5);">${{m.拟定顺序}}</div>`
+                        content: `<div style="width:28px;height:28px;background:${{colors[m.喂猫师] || '#666'}};border:2px solid #fff;border-radius:50%;color:#fff;text-align:center;line-height:26px;font-size:12px;font-weight:bold;">${{m.拟定顺序}}</div>`
                     }}).setLabel({{ direction:'top', offset: new AMap.Pixel(0, -5), content: m.宠物名字 }});
                 }});
                 function drawChain(idx, sData, mode, map) {{
@@ -363,9 +362,7 @@ elif st.session_state['page'] == "智能看板":
                     if (mKey === "Walking") router = new AMap.Walking(cfg);
                     else if (mKey === "Riding") router = new AMap.Riding(cfg);
                     else router = new AMap.Transfer({{ ...cfg, city: '深圳市' }});
-                    router.search([sData[idx].lng, sData[idx].lat], [sData[idx+1].lng, sData[idx+1].lat], function(s, r) {{
-                        setTimeout(() => drawChain(idx + 1, sData, mode, map), 450);
-                    }});
+                    router.search([sData[idx].lng, sData[idx].lat], [sData[idx+1].lng, sData[idx+1].lat], function() {{ setTimeout(() => drawChain(idx + 1, sData, mode, map), 450); }});
                 }}
                 if (data.length > 1) drawChain(0, data, "{nav_mode}", map); else map.setFitView();
             }})();
